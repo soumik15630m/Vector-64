@@ -29,7 +29,11 @@ jobs:
       - name: Run perft suite (Linux)
         if: runner.os == 'Linux'
         working-directory: build
-        run: ./bin/ChessEngine
+        run: ./bin/ChessEngine --perft
+
+      - name: Run UCI smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: python tests/uci_smoke.py build/bin/ChessEngine
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
@@ -43,5 +47,9 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: build
         shell: pwsh
-        run: .\bin\Release\ChessEngine.exe
+        run: .\bin\Release\ChessEngine.exe --perft
 
+      - name: Run UCI smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python tests/uci_smoke.py build/bin/Release/ChessEngine.exe

@@ -15,6 +15,7 @@ set(CORE_SOURCES
         src/cores/movegen.cpp
         src/cores/attacks.cpp
         src/cores/zobrist.cpp
+        src/uci/uci.cpp
 )
 
 set(CORE_HEADERS
@@ -34,6 +35,7 @@ add_executable(ChessEngine
         main.cpp
         tests/perfts.cpp
         tests/perfts.h
+        src/uci/uci.h
 )
 
 target_link_libraries(ChessEngine chess_core)
