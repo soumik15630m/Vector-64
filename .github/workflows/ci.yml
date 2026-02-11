@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cmake --build build -j
+
+      - name: Run perft suite (Linux)
+        if: runner.os == 'Linux'
+        working-directory: build
+        run: ./bin/ChessEngine
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release
+
+      - name: Run perft suite (Windows)
+        if: runner.os == 'Windows'
+        working-directory: build
+        shell: pwsh
+        run: .\bin\Release\ChessEngine.exe
+
