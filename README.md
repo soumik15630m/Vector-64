@@ -113,6 +113,7 @@ Default key mapping expected in the checkpoint:
 Training is done offline in PyTorch, then exported to `VECTOR64_NNUE`.
 
 - Full guide and dataset schema: `docs/nnue-training.md`
+- Lichess eval JSONL -> HalfKP NPZ converter: `tools/nnue/build_halfkp_npz.py`
 - Training script (baseline/recommended): `tools/nnue/train_vector64.py`
 - Pure RL self-play script (experimental): `tools/nnue/rl_train_vector64.py`
 

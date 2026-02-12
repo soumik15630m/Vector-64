@@ -48,6 +48,31 @@ Optional arrays:
 - `--result-blend` (0 to 1)
 - `--result-scale` (maps result into centipawns, default `600`)
 
+### Build From Lichess Eval JSONL
+
+Use `tools/nnue/build_halfkp_npz.py` to convert Lichess eval dumps into shardable HalfKP `.npz` files.
+
+Example:
+
+```powershell
+python .\tools\nnue\build_halfkp_npz.py `
+  --input .\path\to\lichess_db_eval.jsonl.zst `
+  --out-dir .\dataset\halfkp_shards `
+  --shard-size 500000 `
+  --max-features 64 `
+  --min-depth 20 `
+  --max-abs-cp 2000 `
+  --dedup-scope global
+```
+
+Notes:
+
+- Requires `zstandard` only when reading `.zst` directly (`pip install zstandard`).
+- `--cp-source` controls whether input centipawns are already white-perspective (`white`) or side-to-move (`stm`).
+- `--dedup-scope global` persists position dedup state in SQLite at `<out-dir>/dedup_seen.sqlite`.
+- Global dedup key is `piece placement + side to move` (ignores castling/ep/clocks) to prevent history-only duplicates.
+- `manifest.json` includes CP summary (min/max/mean/std + histogram), depth distribution, phase distribution, shard list, and active filtering config.
+
 ## 3. Train
 
 Example command:
