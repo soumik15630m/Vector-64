@@ -16,6 +16,11 @@ set(CORE_SOURCES
         src/cores/attacks.cpp
         src/cores/zobrist.cpp
         src/uci/uci.cpp
+        src/search/transposition_table.cpp
+        src/search/move_ordering.cpp
+        src/search/evaluator.cpp
+        src/search/search.cpp
+        src/nnue/nnue.cpp
 )
 
 set(CORE_HEADERS
@@ -27,6 +32,11 @@ set(CORE_HEADERS
         src/cores/bitboard.h
         src/cores/move.h
         src/cores/invariants.h
+        src/search/transposition_table.h
+        src/search/move_ordering.h
+        src/search/evaluator.h
+        src/search/search.h
+        src/nnue/nnue.h
 )
 
 add_library(chess_core STATIC ${CORE_SOURCES} ${CORE_HEADERS})
@@ -35,6 +45,8 @@ add_executable(ChessEngine
         main.cpp
         tests/perfts.cpp
         tests/perfts.h
+        tests/nnue_consistency.cpp
+        tests/nnue_consistency.h
         src/uci/uci.h
 )
 

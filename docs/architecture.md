@@ -2,25 +2,27 @@
 
 Status: Ongoing
 
+Target production profile: `docs/vector64-spec.md`
+
 ## 1. Purpose
 
-This document defines the architecture of the STK-Vector-64 engine core as currently implemented. It specifies module boundaries, data layout, move-generation flow, legality validation, hashing strategy, and test execution behavior.
+This document defines the architecture of STK-Vector-64 as currently implemented. It specifies module boundaries, data layout, move-generation flow, legality validation, hashing strategy, search behavior, and test execution behavior.
 
 ## 2. Engine Boundaries
 
-The repository currently implements an engine core and verification harness, not a full UCI search stack.
+The repository implements an engine core with a UCI search stack and perft verification harness.
 
 In scope:
 - Board representation and state transitions
 - Pseudo-legal and legal move generation
 - Attack generation (precomputed + magic-bitboard)
 - Incremental Zobrist hashing
+- UCI command loop and time controls
+- Iterative-deepening alpha-beta search with move ordering
 - Perft validation from EPD input
 
 Out of scope:
-- Search (alpha-beta, qsearch, TT replacement policy)
-- Evaluation model
-- UCI command protocol
+- NNUE training pipeline
 - Opening book / endgame tablebase integration
 
 ## 3. Source Topology
@@ -36,9 +38,16 @@ Core modules:
 - `src/cores/invariants.h`: debug-time consistency guard
 
 Support modules:
+- `src/uci/uci.h`, `src/uci/uci.cpp`: protocol loop, options, and search scheduling
+- `src/search/search.h`, `src/search/search.cpp`: iterative deepening negamax alpha-beta
+- `src/search/transposition_table.h`, `src/search/transposition_table.cpp`: depth-preferred TT
+- `src/search/move_ordering.h`, `src/search/move_ordering.cpp`: TT move/MVV-LVA/killer/history ordering
+- `src/search/evaluator.h`, `src/search/evaluator.cpp`: blended NNUE + PSQT evaluation
+- `src/nnue/nnue.h`, `src/nnue/nnue.cpp`: quantized NNUE runtime and HalfKP accumulator scaffolding
 - `src/utils/debug.h`, `src/utils/debug.cpp`: bitboard visualization helper
 - `tests/perfts.h`, `tests/perfts.cpp`: perft and EPD suite runner
-- `main.cpp`: executable entry point for EPD suite execution
+- `tests/nnue_consistency.h`, `tests/nnue_consistency.cpp`: NNUE incremental-vs-full rebuild consistency check
+- `main.cpp`: executable entry point (default UCI mode; explicit debug/test flags)
 
 ## 4. Fundamental Types
 
@@ -233,10 +242,11 @@ These checks protect move/unmove integrity during development and perft debuggin
 
 ## 12. Test and Verification Surface
 
-`main.cpp` invokes EPD suite runner:
-- loads `test_data/standard.epd`
-- executes perft to configured max depth
-- returns nonzero on mismatch/failure
+`main.cpp` defaults to the UCI loop.
+
+Explicit diagnostic modes:
+- `--perft [path]`: loads EPD input (default `test_data/standard.epd`) and validates expected node counts
+- `--nnue-consistency [games] [max-plies] [seed]`: compares incremental accumulator updates against full rebuilds on random legal playouts and fails fast on mismatch
 
 `tests/perfts.cpp` provides:
 - recursive perft
@@ -270,14 +280,23 @@ Observed benchmark outputs in this repository have reported >100 MNPS single-thr
 ## 15. Known Architectural Constraints
 
 - Magic initialization is runtime-generated, increasing startup cost.
-- Current executable path is test-first (EPD/perft), not protocol-driven engine mode.
+- Search currently evaluates NNUE by full rebuild at each node (incremental eval path is not yet integrated into search).
 - Multithread perft currently spawns per-branch async tasks; this is benchmark-oriented and not a search scheduler.
 
-## 16. Extension Points
+## 16. High-Risk Components
+
+Current high-risk areas that require continuous verification:
+- Accumulator correctness across make/unmake sequences
+- TT interaction with NNUE evaluation semantics
+- Thread-local NNUE state design for parallel search
+- Cache-line alignment sensitivity with hidden size 512 data layout
+- Quantization contract drift between Python export and C++ runtime inference
+
+## 17. Extension Points
 
 Natural extension points without breaking core structure:
-- add search module over existing legal move API
-- add transposition table keyed by existing Zobrist hash
-- add UCI front-end as separate interface layer
-- add dedicated benchmark command path distinct from CI correctness path
+- integrate thread-local incremental NNUE state into search nodes
+- add automated quantization parity checks (PyTorch float vs exported int runtime)
+- add dedicated stress suites for TT + eval interaction under time controls
+- add stronger CI coverage for NNUE loader corruption cases
 
