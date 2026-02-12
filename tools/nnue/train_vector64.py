@@ -26,13 +26,14 @@ Dataset format (.npz):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import numpy as np
 import torch
@@ -54,6 +55,11 @@ OUTPUT_SCALE = 16.0
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train Vector-64 NNUE model.")
     p.add_argument("--dataset", required=True, help="Path to dataset .npz")
+    p.add_argument(
+        "--dataset-manifest",
+        default=None,
+        help="Optional manifest/meta JSON path. If omitted, auto-resolves sidecar or parent manifest.json",
+    )
     p.add_argument("--out-checkpoint", required=True, help="Path to output .pt checkpoint")
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--batch-size", type=int, default=1024)
@@ -107,6 +113,7 @@ class LoadedDataset:
     white_vals: Optional[torch.Tensor]
     black_vals: Optional[torch.Tensor]
     sample_weight: Optional[torch.Tensor]
+    raw_count: int
 
 
 def load_dataset(
@@ -129,7 +136,8 @@ def load_dataset(
     stm = require_key(data, "stm").astype(np.int64, copy=False).reshape(-1)
     eval_cp = require_key(data, "eval_cp").astype(np.float32, copy=False).reshape(-1)
 
-    n = eval_cp.shape[0]
+    raw_count = int(eval_cp.shape[0])
+    n = raw_count
     if white_idx.shape[0] != n or black_idx.shape[0] != n or stm.shape[0] != n:
         raise ValueError(
             "Dataset row mismatch: white_indices, black_indices, stm, eval_cp must share first dimension."
@@ -195,7 +203,159 @@ def load_dataset(
         white_vals=white_vals,
         black_vals=black_vals,
         sample_weight=sample_weight,
+        raw_count=raw_count,
     )
+
+
+def dataset_sha256(path: Path, chunk_size: int = 8 * 1024 * 1024) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def resolve_manifest_path(dataset_path: Path, explicit_manifest: Optional[str]) -> Path:
+    if explicit_manifest:
+        p = Path(explicit_manifest)
+        if not p.exists():
+            raise FileNotFoundError(f"Manifest not found: {p}")
+        return p
+
+    sidecar = dataset_path.with_suffix(".meta.json")
+    if sidecar.exists():
+        return sidecar
+
+    parent_manifest = dataset_path.parent / "manifest.json"
+    if parent_manifest.exists():
+        return parent_manifest
+
+    raise FileNotFoundError(
+        "No dataset manifest found. Provide --dataset-manifest, or ensure either "
+        f"{sidecar.name} or manifest.json exists next to dataset shards."
+    )
+
+
+def load_manifest(path: Path) -> dict:
+    with path.open("r", encoding="utf-8") as fh:
+        obj = json.load(fh)
+    if not isinstance(obj, dict):
+        raise ValueError(f"Manifest must be a JSON object: {path}")
+    return obj
+
+
+def expected_samples_from_manifest(manifest: dict, dataset_path: Path) -> int:
+    if "samples" in manifest:
+        return int(manifest["samples"])
+
+    shards = manifest.get("shards")
+    if isinstance(shards, list):
+        for shard in shards:
+            if not isinstance(shard, dict):
+                continue
+            if str(shard.get("file", "")) == dataset_path.name:
+                if "samples" not in shard:
+                    raise ValueError(f"Shard entry has no 'samples' for {dataset_path.name}")
+                return int(shard["samples"])
+
+    # Fallback for single-dataset manifests.
+    if "total_samples" in manifest:
+        if isinstance(shards, list) and len(shards) > 1:
+            raise ValueError(
+                f"Dataset {dataset_path.name} not found in manifest shards list; cannot infer expected samples."
+            )
+        return int(manifest["total_samples"])
+
+    raise ValueError("Manifest does not contain sample count fields ('samples' or 'total_samples').")
+
+
+def cp_distribution(cp: np.ndarray) -> dict[str, Any]:
+    if cp.ndim != 1:
+        cp = cp.reshape(-1)
+    if cp.size == 0:
+        return {
+            "count": 0,
+            "min": None,
+            "max": None,
+            "mean": 0.0,
+            "std": 0.0,
+            "p01": 0.0,
+            "p05": 0.0,
+            "p50": 0.0,
+            "p95": 0.0,
+            "p99": 0.0,
+            "hist_edges": [],
+            "hist_counts": [],
+        }
+
+    hist_counts, hist_edges = np.histogram(cp, bins=20)
+    return {
+        "count": int(cp.size),
+        "min": float(np.min(cp)),
+        "max": float(np.max(cp)),
+        "mean": float(np.mean(cp)),
+        "std": float(np.std(cp)),
+        "p01": float(np.percentile(cp, 1)),
+        "p05": float(np.percentile(cp, 5)),
+        "p50": float(np.percentile(cp, 50)),
+        "p95": float(np.percentile(cp, 95)),
+        "p99": float(np.percentile(cp, 99)),
+        "hist_edges": [float(x) for x in hist_edges.tolist()],
+        "hist_counts": [int(x) for x in hist_counts.tolist()],
+    }
+
+
+def assert_finite_tensor(name: str, t: torch.Tensor) -> None:
+    arr = t.detach().cpu().numpy()
+    if not np.isfinite(arr).all():
+        raise ValueError(f"Detected NaN/Inf in tensor: {name}")
+
+
+def run_dataset_preflight(
+    *,
+    dataset_path: Path,
+    manifest_path: Path,
+    manifest: dict,
+    loaded: LoadedDataset,
+) -> tuple[str, dict[str, Any]]:
+    data_hash = dataset_sha256(dataset_path)
+    expected_rows = expected_samples_from_manifest(manifest, dataset_path)
+    if loaded.raw_count != expected_rows:
+        raise ValueError(
+            f"Sample count mismatch: dataset has {loaded.raw_count}, manifest expects {expected_rows} "
+            f"(dataset={dataset_path.name}, manifest={manifest_path.name})."
+        )
+
+    manifest_hash = manifest.get("sha256")
+    if manifest_hash is not None and str(manifest_hash).lower() != data_hash.lower():
+        raise ValueError(
+            f"Dataset hash mismatch: computed {data_hash}, manifest sha256={manifest_hash}"
+        )
+
+    assert_finite_tensor("target_cp", loaded.target_cp)
+    assert_finite_tensor("white_idx", loaded.white_idx)
+    assert_finite_tensor("black_idx", loaded.black_idx)
+    assert_finite_tensor("stm", loaded.stm)
+    if loaded.white_vals is not None:
+        assert_finite_tensor("white_vals", loaded.white_vals)
+    if loaded.black_vals is not None:
+        assert_finite_tensor("black_vals", loaded.black_vals)
+    if loaded.sample_weight is not None:
+        assert_finite_tensor("sample_weight", loaded.sample_weight)
+
+    cp = loaded.target_cp.detach().cpu().numpy().astype(np.float64, copy=False)
+    cp_stats = cp_distribution(cp)
+    if cp_stats["std"] <= 0.0:
+        raise ValueError("Degenerate target distribution: stddev is zero.")
+
+    print(f"Dataset SHA256: {data_hash}")
+    print("Target CP distribution:")
+    print(json.dumps(cp_stats, indent=2))
+
+    return data_hash, cp_stats
 
 
 class Vector64Dataset(Dataset):
