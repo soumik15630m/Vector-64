@@ -39,6 +39,7 @@ namespace Search {
         void set_hash_mb(size_t hashMb);
         void clear();
         bool load_nnue(const std::string& path);
+        int evaluate(const Core::Position& pos);
 
         size_t hash_mb() const { return hashMb_; }
 
@@ -58,6 +59,8 @@ namespace Search {
             const Limits& limits,
             const Callbacks& callbacks
         );
+
+        int quiescence(Core::Position& pos, int alpha, int beta, const Limits& limits, const Callbacks& callbacks);
 
         int search_root(
             Core::Position& root,

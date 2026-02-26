@@ -4,8 +4,16 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <regex>
+
+// Include SIMD intrinsics if supported
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
 
 namespace NNUE {
     namespace {
@@ -41,6 +49,23 @@ namespace NNUE {
 
         int8_t relu_i8(int8_t value) {
             return static_cast<int8_t>(std::max(0, static_cast<int>(value)));
+        }
+
+        bool extract_json_float(const std::string& text, const std::string& key, float& out) {
+            const std::regex pattern(
+                "\"" + key + "\"\\s*:\\s*([-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?)"
+            );
+            std::smatch match;
+            if (!std::regex_search(text, match, pattern) || match.size() < 2) return false;
+
+            try {
+                const float parsed = std::stof(match[1].str());
+                if (!std::isfinite(parsed)) return false;
+                out = parsed;
+                return true;
+            } catch (...) {
+                return false;
+            }
         }
 
         void apply_delta(std::array<int16_t, HIDDEN_SIZE>& target, uint32_t featureIndex, int sign) {
@@ -297,6 +322,7 @@ namespace NNUE {
 
         network_ = std::move(network);
         loaded_ = true;
+        useScaledInference_ = try_load_sidecar_scales(path);
         return true;
     }
 
@@ -305,10 +331,22 @@ namespace NNUE {
         const size_t base = static_cast<size_t>(featureIndex) * static_cast<size_t>(HIDDEN_SIZE);
         const int16_t* src = network_.featureTransformWeights.data() + base;
 
-        for (int i = 0; i < HIDDEN_SIZE; ++i) {
-            const int sum = static_cast<int>(target[static_cast<size_t>(i)]) + static_cast<int>(src[static_cast<size_t>(i)]);
-            target[static_cast<size_t>(i)] = clamp_sym_i16(sum);
+#if defined(__AVX2__)
+        // AVX2 Optimization: Process 16 int16_t elements at a time
+        // HIDDEN_SIZE must be a multiple of 16 (512 is 16 * 32)
+        int16_t* tgt = target.data();
+        for (int i = 0; i < HIDDEN_SIZE; i += 16) {
+            __m256i v_src = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src + i));
+            __m256i v_tgt = _mm256_load_si256(reinterpret_cast<const __m256i*>(tgt + i));
+            // adds_epi16 performs saturated addition, which is standard for NNUE
+            _mm256_store_si256(reinterpret_cast<__m256i*>(tgt + i), _mm256_adds_epi16(v_tgt, v_src));
         }
+#else
+        for (int i = 0; i < HIDDEN_SIZE; ++i) {
+            const int sum = static_cast<int>(target[i]) + static_cast<int>(src[i]);
+            target[i] = clamp_sym_i16(sum);
+        }
+#endif
     }
 
     void Runtime::rebuild_accumulator(const Core::Position& pos, Accumulator512& accum) const {
@@ -345,6 +383,19 @@ namespace NNUE {
         }
     }
 
+    void Runtime::add_feature_vector_scaled(
+        std::array<float, HIDDEN_SIZE>& target,
+        uint32_t featureIndex,
+        float scale
+    ) const {
+        if (featureIndex >= HALF_KP_TOTAL_FEATURES) return;
+        const size_t base = static_cast<size_t>(featureIndex) * static_cast<size_t>(HIDDEN_SIZE);
+        const int16_t* src = network_.featureTransformWeights.data() + base;
+        for (int i = 0; i < HIDDEN_SIZE; ++i) {
+            target[static_cast<size_t>(i)] += static_cast<float>(src[i]) * scale;
+        }
+    }
+
     int Runtime::infer_side_to_move(const Accumulator512& accum, Core::Color stm) const {
         const auto& us = stm == Core::WHITE ? accum.white : accum.black;
         const auto& them = stm == Core::WHITE ? accum.black : accum.white;
@@ -353,19 +404,39 @@ namespace NNUE {
         std::array<int8_t, DENSE_L1_SIZE> x1{};
         std::array<int8_t, DENSE_L2_SIZE> x2{};
 
-        for (int i = 0; i < HIDDEN_SIZE; ++i) {
-            const int centered = static_cast<int>(us[static_cast<size_t>(i)]) -
-                                 static_cast<int>(them[static_cast<size_t>(i)]);
-            const int8_t clipped = clamp_sym_i8(centered / FEATURE_TO_DENSE_SCALE);
-            x0[static_cast<size_t>(i)] = relu_i8(clipped);
+    #if defined(__AVX2__)
+        for (int i = 0; i < HIDDEN_SIZE; i += 32) {
+            __m256i us_0 = _mm256_load_si256(reinterpret_cast<const __m256i*>(&us[i]));
+            __m256i us_1 = _mm256_load_si256(reinterpret_cast<const __m256i*>(&us[i + 16]));
+            __m256i them_0 = _mm256_load_si256(reinterpret_cast<const __m256i*>(&them[i]));
+            __m256i them_1 = _mm256_load_si256(reinterpret_cast<const __m256i*>(&them[i + 16]));
+
+            __m256i diff_0 = _mm256_sub_epi16(us_0, them_0);
+            __m256i diff_1 = _mm256_sub_epi16(us_1, them_1);
+
+            diff_0 = _mm256_srai_epi16(diff_0, 6);
+            diff_1 = _mm256_srai_epi16(diff_1, 6);
         }
+
+        for (int i = 0; i < HIDDEN_SIZE; ++i) {
+            const int centered = static_cast<int>(us[i]) - static_cast<int>(them[i]);
+            const int8_t clipped = clamp_sym_i8(centered / FEATURE_TO_DENSE_SCALE);
+            x0[i] = relu_i8(clipped);
+        }
+    #else
+        for (int i = 0; i < HIDDEN_SIZE; ++i) {
+            const int centered = static_cast<int>(us[i]) - static_cast<int>(them[i]);
+            const int8_t clipped = clamp_sym_i8(centered / FEATURE_TO_DENSE_SCALE);
+            x0[i] = relu_i8(clipped);
+        }
+    #endif
 
         for (int out = 0; out < DENSE_L1_SIZE; ++out) {
             int32_t sum = network_.l1Bias[static_cast<size_t>(out)];
             const size_t row = static_cast<size_t>(out) * static_cast<size_t>(HIDDEN_SIZE);
             for (int i = 0; i < HIDDEN_SIZE; ++i) {
                 sum += static_cast<int32_t>(network_.l1Weights[row + static_cast<size_t>(i)]) *
-                       static_cast<int32_t>(x0[static_cast<size_t>(i)]);
+                    static_cast<int32_t>(x0[static_cast<size_t>(i)]);
             }
             x1[static_cast<size_t>(out)] = relu_i8(clamp_sym_i8(sum / DENSE_TO_DENSE_SCALE));
         }
@@ -375,7 +446,7 @@ namespace NNUE {
             const size_t row = static_cast<size_t>(out) * static_cast<size_t>(DENSE_L1_SIZE);
             for (int i = 0; i < DENSE_L1_SIZE; ++i) {
                 sum += static_cast<int32_t>(network_.l2Weights[row + static_cast<size_t>(i)]) *
-                       static_cast<int32_t>(x1[static_cast<size_t>(i)]);
+                    static_cast<int32_t>(x1[static_cast<size_t>(i)]);
             }
             x2[static_cast<size_t>(out)] = relu_i8(clamp_sym_i8(sum / DENSE_TO_DENSE_SCALE));
         }
@@ -383,9 +454,126 @@ namespace NNUE {
         int32_t out = network_.outBias;
         for (int i = 0; i < DENSE_L2_SIZE; ++i) {
             out += static_cast<int32_t>(network_.outWeights[static_cast<size_t>(i)]) *
-                   static_cast<int32_t>(x2[static_cast<size_t>(i)]);
+                static_cast<int32_t>(x2[static_cast<size_t>(i)]);
         }
+
         return static_cast<int>(out / OUTPUT_SCALE);
+    }
+
+    int Runtime::infer_side_to_move_scaled(const Core::Position& pos) const {
+        const Core::Bitboard whiteKing = pos.pieces(Core::KING, Core::WHITE);
+        const Core::Bitboard blackKing = pos.pieces(Core::KING, Core::BLACK);
+        if (whiteKing == 0 || blackKing == 0) return 0;
+
+        const Core::Square whiteKingSq = Core::lsb(whiteKing);
+        const Core::Square blackKingSq = Core::lsb(blackKing);
+
+        std::array<float, HIDDEN_SIZE> whiteAcc{};
+        std::array<float, HIDDEN_SIZE> blackAcc{};
+        for (int i = 0; i < HIDDEN_SIZE; ++i) {
+            const float bias = static_cast<float>(network_.featureBias[static_cast<size_t>(i)]) * scales_.featureTransformBias;
+            whiteAcc[static_cast<size_t>(i)] = bias;
+            blackAcc[static_cast<size_t>(i)] = bias;
+        }
+
+        for (int c = Core::WHITE; c <= Core::BLACK; ++c) {
+            const Core::Color color = static_cast<Core::Color>(c);
+            for (int pt = Core::PAWN; pt <= Core::QUEEN; ++pt) {
+                Core::Bitboard bb = pos.pieces(static_cast<Core::PieceType>(pt), color);
+                while (bb) {
+                    const Core::Square sq = Core::pop_lsb(bb);
+                    const uint32_t whiteIdx = halfkp_feature_index(
+                        whiteKingSq, static_cast<Core::PieceType>(pt), color, sq, Core::WHITE
+                    );
+                    const uint32_t blackIdx = halfkp_feature_index(
+                        blackKingSq, static_cast<Core::PieceType>(pt), color, sq, Core::BLACK
+                    );
+
+                    add_feature_vector_scaled(whiteAcc, whiteIdx, scales_.featureTransformWeight);
+                    add_feature_vector_scaled(blackAcc, blackIdx, scales_.featureTransformWeight);
+                }
+            }
+        }
+
+        const auto& us = pos.side_to_move() == Core::WHITE ? whiteAcc : blackAcc;
+        const auto& them = pos.side_to_move() == Core::WHITE ? blackAcc : whiteAcc;
+
+        std::array<float, HIDDEN_SIZE> x0{};
+        std::array<float, DENSE_L1_SIZE> x1{};
+        std::array<float, DENSE_L2_SIZE> x2{};
+
+        for (int i = 0; i < HIDDEN_SIZE; ++i) {
+            const float centered = (us[static_cast<size_t>(i)] - them[static_cast<size_t>(i)]) /
+                static_cast<float>(FEATURE_TO_DENSE_SCALE);
+            x0[static_cast<size_t>(i)] = std::max(0.0f, centered);
+        }
+
+        for (int out = 0; out < DENSE_L1_SIZE; ++out) {
+            float sum = static_cast<float>(network_.l1Bias[static_cast<size_t>(out)]) * scales_.l1Bias;
+            const size_t row = static_cast<size_t>(out) * static_cast<size_t>(HIDDEN_SIZE);
+            for (int i = 0; i < HIDDEN_SIZE; ++i) {
+                sum += (static_cast<float>(network_.l1Weights[row + static_cast<size_t>(i)]) * scales_.l1Weight) *
+                    x0[static_cast<size_t>(i)];
+            }
+            x1[static_cast<size_t>(out)] = std::max(0.0f, sum / static_cast<float>(DENSE_TO_DENSE_SCALE));
+        }
+
+        for (int out = 0; out < DENSE_L2_SIZE; ++out) {
+            float sum = static_cast<float>(network_.l2Bias[static_cast<size_t>(out)]) * scales_.l2Bias;
+            const size_t row = static_cast<size_t>(out) * static_cast<size_t>(DENSE_L1_SIZE);
+            for (int i = 0; i < DENSE_L1_SIZE; ++i) {
+                sum += (static_cast<float>(network_.l2Weights[row + static_cast<size_t>(i)]) * scales_.l2Weight) *
+                    x1[static_cast<size_t>(i)];
+            }
+            x2[static_cast<size_t>(out)] = std::max(0.0f, sum / static_cast<float>(DENSE_TO_DENSE_SCALE));
+        }
+
+        float out = static_cast<float>(network_.outBias) * scales_.outBias;
+        for (int i = 0; i < DENSE_L2_SIZE; ++i) {
+            out += (static_cast<float>(network_.outWeights[static_cast<size_t>(i)]) * scales_.outWeight) *
+                x2[static_cast<size_t>(i)];
+        }
+
+        return static_cast<int>(std::lround(out / static_cast<float>(OUTPUT_SCALE)));
+    }
+
+    bool Runtime::try_load_sidecar_scales(const std::string& path) {
+        useScaledInference_ = false;
+        scales_ = QuantScales{};
+
+        std::vector<std::filesystem::path> candidates;
+        candidates.emplace_back(std::filesystem::path(path).string() + ".meta.json");
+        candidates.emplace_back(std::filesystem::path(path).filename().string() + ".meta.json");
+
+        for (const auto& candidate : candidates) {
+            if (candidate.empty() || !std::filesystem::exists(candidate)) continue;
+
+            std::ifstream in(candidate, std::ios::binary);
+            if (!in) continue;
+            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (text.empty()) continue;
+
+            QuantScales parsed{};
+            if (!extract_json_float(text, "feature_transform_weight", parsed.featureTransformWeight)) continue;
+            if (!extract_json_float(text, "feature_transform_bias", parsed.featureTransformBias)) continue;
+            if (!extract_json_float(text, "dense1_weight", parsed.l1Weight)) continue;
+            if (!extract_json_float(text, "dense1_bias", parsed.l1Bias)) continue;
+            if (!extract_json_float(text, "dense2_weight", parsed.l2Weight)) continue;
+            if (!extract_json_float(text, "dense2_bias", parsed.l2Bias)) continue;
+            if (!extract_json_float(text, "output_weight", parsed.outWeight)) continue;
+            if (!extract_json_float(text, "output_bias", parsed.outBias)) continue;
+
+            if (parsed.featureTransformWeight <= 0.0f || parsed.featureTransformBias <= 0.0f) continue;
+            if (parsed.l1Weight <= 0.0f || parsed.l1Bias <= 0.0f) continue;
+            if (parsed.l2Weight <= 0.0f || parsed.l2Bias <= 0.0f) continue;
+            if (parsed.outWeight <= 0.0f || parsed.outBias <= 0.0f) continue;
+
+            scales_ = parsed;
+            useScaledInference_ = true;
+            return true;
+        }
+
+        return false;
     }
 
     int Runtime::material_proxy_stm(const Core::Position& pos) const {
@@ -406,6 +594,10 @@ namespace NNUE {
 
     int Runtime::evaluate(const Core::Position& pos) const {
         if (!loaded_) return material_proxy_stm(pos);
+
+        if (useScaledInference_) {
+            return infer_side_to_move_scaled(pos);
+        }
 
         Accumulator512 accum{};
         rebuild_accumulator(pos, accum);

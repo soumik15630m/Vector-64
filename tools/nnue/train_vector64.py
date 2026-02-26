@@ -26,6 +26,8 @@ Dataset format (.npz):
 from __future__ import annotations
 
 import argparse
+import os
+import glob
 import hashlib
 import json
 import math
@@ -65,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=1024)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-2)
-    p.add_argument("--min-lr", type=float, default=1e-5)
+    p.add_argument("--min-lr", type=float, default=1e-7)
     p.add_argument("--val-split", type=float, default=0.01, help="Validation split in [0, 0.5)")
     p.add_argument("--num-workers", type=int, default=0)
     p.add_argument("--seed", type=int, default=1337)
@@ -76,6 +78,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-positions", type=int, default=0, help="Use first N positions (0 = all)")
     p.add_argument("--amp", action="store_true", help="Enable torch.cuda.amp autocast")
     p.add_argument("--log-every", type=int, default=100, help="Mini-batch logging interval")
+    p.add_argument("--resume", default=None, help="Path to a checkpoint to resume training from")
+    p.add_argument("--shard-slice", help="Slice of shards to load, e.g. '0:40'")
     return p.parse_args()
 
 
@@ -123,13 +127,54 @@ def load_dataset(
     result_scale: float,
     max_target_cp: float,
     max_positions: int,
+    shard_slice: str = None,
 ) -> LoadedDataset:
     if not 0.0 <= result_blend <= 1.0:
         raise ValueError("--result-blend must be in [0, 1]")
     if max_target_cp <= 0:
         raise ValueError("--max-target-cp must be > 0")
 
-    data = np.load(path)
+    path_str = str(path)
+
+    # Check if we are loading a list of shards (folder or manifest)
+    if path_str.endswith('.json') or os.path.isdir(path_str):
+        if path_str.endswith('.json'):
+            base_dir = os.path.dirname(path_str)
+        else:
+            base_dir = path_str
+
+        # Find all .npz files
+        files = sorted(glob.glob(os.path.join(base_dir, "*.npz")))
+        if shard_slice:
+            start, end = map(int, shard_slice.split(':'))
+            files = files[start:end]
+            print(f"Dataset: Slicing shards {start} to {end} (Total: {len(files)})")
+        print(f"Dataset: Detected {len(files)} shards. Loading from {base_dir}...")
+
+        if not files:
+            raise ValueError(f"No .npz files found in {base_dir}")
+
+        # 1. Load the first file to get the keys (stm, white_indices, etc.)
+        with np.load(files[0], allow_pickle=True) as first:
+            keys = list(first.keys())
+
+        # 2. Collect all arrays from all files
+        collected = {k: [] for k in keys}
+
+        for i, f in enumerate(files):
+            if i % 20 == 0: print(f"  Loading shard {i}/{len(files)}...")
+            with np.load(f, allow_pickle=True) as shard:
+                for k in keys:
+                    collected[k].append(shard[k])
+
+        print("  Merging shards into RAM...")
+        # 3. Concatenate them into one giant dictionary
+        data = {k: np.concatenate(collected[k], axis=0) for k in keys}
+        print(f" Loaded {len(data['stm'])} positions.")
+
+    else:
+        # Fallback for single file
+        data = np.load(path, allow_pickle=True)
 
     white_idx = require_key(data, "white_indices").astype(np.int64, copy=False)
     black_idx = require_key(data, "black_indices").astype(np.int64, copy=False)
@@ -483,6 +528,8 @@ def run_epoch(
             assert optimizer is not None
             if scaler is not None:
                 scaler.scale(loss).backward()
+                # Force gradients to stay within a sane range
+                # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimizer)
                 scaler.update()
             else:
@@ -521,6 +568,7 @@ def main() -> int:
         result_scale=args.result_scale,
         max_target_cp=args.max_target_cp,
         max_positions=args.max_positions,
+        shard_slice=args.shard_slice,
     )
     dataset = Vector64Dataset(loaded)
 
@@ -563,6 +611,16 @@ def main() -> int:
         )
 
     model = Vector64NNUE().to(device)
+    if args.resume:
+        if os.path.isfile(args.resume):
+            print(f"Loading checkpoint from: {args.resume}")
+            checkpoint = torch.load(args.resume, map_location=device)
+
+            # Load the weights
+            model.load_state_dict(checkpoint['state_dict'])
+            print(" Weights loaded successfully.")
+        else:
+            print(f" Warning: Checkpoint file not found at {args.resume}. Starting from scratch.")
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     total_steps = max(1, args.epochs * max(1, len(train_loader)))

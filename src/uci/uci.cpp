@@ -39,13 +39,6 @@ namespace UCI {
             uint64_t nodes = 0;
         };
 
-        struct SearchLimits {
-            int maxDepth = MAX_DEPTH;
-            uint64_t maxNodes = 0;
-            bool hasDeadline = false;
-            Clock::time_point deadline{};
-        };
-
         std::string to_lower(std::string s) {
             std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
                 return static_cast<char>(std::tolower(c));
@@ -187,6 +180,12 @@ namespace UCI {
                 }
                 if (cmd == "position") {
                     handle_position(tokens);
+                    return true;
+                }
+                if (cmd == "eval") {
+                    std::lock_guard<std::mutex> lock(positionMu_);
+                    int score = search_.evaluate(position_);
+                    emit("info string evaluation score: " + std::to_string(score) + " cp");
                     return true;
                 }
                 if (cmd == "go") {
@@ -402,34 +401,6 @@ namespace UCI {
                 stopRequested_.store(false, std::memory_order_relaxed);
             }
 
-            SearchLimits compute_limits(const Core::Position& pos, const GoParams& params) const {
-                SearchLimits limits;
-                limits.maxDepth = params.depth > 0 ? std::min(params.depth, MAX_DEPTH) : MAX_DEPTH;
-                limits.maxNodes = params.nodes;
-
-                if (params.movetimeMs > 0) {
-                    const int budget = std::max(1, params.movetimeMs - moveOverheadMs_);
-                    limits.hasDeadline = true;
-                    limits.deadline = Clock::now() + Ms(budget);
-                    return limits;
-                }
-
-                if (params.infinite || params.ponder) return limits;
-
-                const int remain = pos.side_to_move() == Core::WHITE ? params.wtimeMs : params.btimeMs;
-                const int inc = pos.side_to_move() == Core::WHITE ? params.wincMs : params.bincMs;
-                if (remain > 0) {
-                    const int mtg = params.movesToGo > 0 ? params.movesToGo : 30;
-                    const int slice = remain / std::max(1, mtg);
-                    int budget = slice + static_cast<int>(inc * 0.7);
-                    budget = std::max(1, budget - moveOverheadMs_);
-                    budget = std::min(budget, std::max(1, remain - moveOverheadMs_));
-                    limits.hasDeadline = true;
-                    limits.deadline = Clock::now() + Ms(budget);
-                }
-                return limits;
-            }
-
             void emit_info(int depth, int scoreCp, const Core::Move& pvMove, uint64_t nodes, int elapsedMs) {
                 const uint64_t nps = elapsedMs > 0 ? (nodes * 1000ULL) / static_cast<uint64_t>(elapsedMs) : 0ULL;
 
@@ -454,23 +425,75 @@ namespace UCI {
                     std::lock_guard<std::mutex> lock(positionMu_);
                     root = position_;
                 }
+                int optimumTimeMs = -1;
+                int maximumTimeMs = -1;
 
-                const SearchLimits limits = compute_limits(root, params);
+                if (params.movetimeMs > 0) {
+                    maximumTimeMs = std::max(1, params.movetimeMs - moveOverheadMs_);
+                    optimumTimeMs = maximumTimeMs;
+                } else if (!params.infinite && !params.ponder) {
+                    const int remain = root.side_to_move() == Core::WHITE ? params.wtimeMs : params.btimeMs;
+                    const int inc = root.side_to_move() == Core::WHITE ? params.wincMs : params.bincMs;
+
+                    if (remain > 0) {
+                        const int mtg = params.movesToGo > 0 ? params.movesToGo : 40;
+
+                        // Base allocation: 1/40th of time + partial increment
+                        optimumTimeMs = remain / mtg + (inc * 3) / 4 - moveOverheadMs_;
+                        // Hard cutoff to prevent flagging: 20% of remaining time
+                        maximumTimeMs = remain / 5 - moveOverheadMs_;
+
+                        optimumTimeMs = std::max(1, optimumTimeMs);
+                        maximumTimeMs = std::clamp(maximumTimeMs, 1, std::max(1, remain - moveOverheadMs_));
+                        optimumTimeMs = std::min(optimumTimeMs, maximumTimeMs);
+                    }
+                }
 
                 Search::Limits searchLimits;
-                searchLimits.maxDepth = limits.maxDepth;
-                searchLimits.maxNodes = limits.maxNodes;
-                searchLimits.hasDeadline = limits.hasDeadline;
-                searchLimits.deadline = limits.deadline;
+                searchLimits.maxDepth = params.depth > 0 ? std::min(params.depth, MAX_DEPTH) : MAX_DEPTH;
+                searchLimits.maxNodes = params.nodes;
+                searchLimits.hasDeadline = false;
+
+                if (maximumTimeMs > 0) {
+                    searchLimits.hasDeadline = true;
+                    searchLimits.deadline = Clock::now() + Ms(maximumTimeMs);
+                }
+
+                std::atomic<bool> softStop{false};
+
+                // Track score across iterations to determine if we are blundering
+                int previousScore = 0;
+                bool firstIteration = true;
+                int currentOptimumMs = optimumTimeMs;
 
                 Search::Callbacks callbacks;
-                callbacks.shouldStop = [this, searchId]() {
-                    return stopRequested_.load(std::memory_order_relaxed) ||
+                callbacks.shouldStop = [this, searchId, &softStop]() {
+                    return softStop.load(std::memory_order_relaxed) ||
+                           stopRequested_.load(std::memory_order_relaxed) ||
                            searchId != activeSearchId_.load(std::memory_order_relaxed);
                 };
-                callbacks.onInfo = [this, searchId](int depth, int scoreCp, Core::Move pvMove, uint64_t nodes, int elapsedMs) {
+
+                callbacks.onInfo = [this, searchId, &softStop, &previousScore, &firstIteration, &currentOptimumMs, maximumTimeMs](
+                    int depth, int scoreCp, Core::Move pvMove, uint64_t nodes, int elapsedMs) {
+
                     if (searchId != activeSearchId_.load(std::memory_order_relaxed)) return;
                     emit_info(depth, scoreCp, pvMove, nodes, elapsedMs);
+
+                    if (!firstIteration && currentOptimumMs > 0) {
+                        // If the evaluation drops by more than 30 cp, extend the optimum time
+                        // to ensure we aren't walking into a tactical blunder due to the horizon effect.
+                        if (scoreCp < previousScore - 30) {
+                            currentOptimumMs = std::min(maximumTimeMs, static_cast<int>(currentOptimumMs * 1.5));
+                        }
+                    }
+
+                    previousScore = scoreCp;
+                    firstIteration = false;
+
+                    // If we finished a depth and exceeded our allowed soft-limit time, trigger a stop
+                    if (currentOptimumMs > 0 && elapsedMs >= currentOptimumMs) {
+                        softStop.store(true, std::memory_order_relaxed);
+                    }
                 };
 
                 const Search::Result result = search_.search(root, searchLimits, callbacks);

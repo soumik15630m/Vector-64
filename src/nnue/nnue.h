@@ -94,6 +94,17 @@ namespace NNUE {
         int evaluate(const Core::Position& pos) const;
 
     private:
+        struct QuantScales {
+            float featureTransformWeight = 1.0f;
+            float featureTransformBias = 1.0f;
+            float l1Weight = 1.0f;
+            float l1Bias = 1.0f;
+            float l2Weight = 1.0f;
+            float l2Bias = 1.0f;
+            float outWeight = 1.0f;
+            float outBias = 1.0f;
+        };
+
         struct Network {
             std::vector<int16_t> featureTransformWeights{};
             std::array<int8_t, DENSE_L1_SIZE * HIDDEN_SIZE> l1Weights{};
@@ -109,11 +120,20 @@ namespace NNUE {
         static bool read_exact(std::ifstream& in, void* dst, size_t bytes);
 
         void add_feature_vector(std::array<int16_t, HIDDEN_SIZE>& target, uint32_t featureIndex) const;
+        void add_feature_vector_scaled(
+            std::array<float, HIDDEN_SIZE>& target,
+            uint32_t featureIndex,
+            float scale
+        ) const;
         void rebuild_accumulator(const Core::Position& pos, Accumulator512& accum) const;
         int infer_side_to_move(const Accumulator512& accum, Core::Color stm) const;
+        int infer_side_to_move_scaled(const Core::Position& pos) const;
+        bool try_load_sidecar_scales(const std::string& path);
         int material_proxy_stm(const Core::Position& pos) const;
 
         bool loaded_ = false;
+        bool useScaledInference_ = false;
+        QuantScales scales_{};
         Network network_{};
     };
 

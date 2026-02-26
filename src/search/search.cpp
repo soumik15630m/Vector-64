@@ -3,6 +3,7 @@
 #include <algorithm>
 
 namespace Search {
+
     EngineSearch::EngineSearch(size_t hashMb)
         : hashMb_(hashMb),
           tt_(hashMb) {
@@ -29,6 +30,47 @@ namespace Search {
         return false;
     }
 
+    // Continues searching captures at depth <= 0 to prevent the "horizon effect"
+    // (e.g., stopping search while a queen is en prise).
+    int EngineSearch::quiescence(
+        Core::Position& pos,
+        int alpha,
+        int beta,
+        const Limits& limits,
+        const Callbacks& callbacks
+    ) {
+        if ((nodes_ & 2047) == 0 && should_stop(limits, callbacks)) return 0;
+        nodes_++;
+        int standPat = evaluator_.evaluate(pos);
+        if (standPat >= beta) return beta;
+        if (standPat > alpha) alpha = standPat;
+
+        Core::MoveList moves;
+        Core::generate_legal_moves(pos, moves);
+        ordering_.sort_moves(pos, moves, Core::Move::none(), 0);
+
+        for (int i = 0; i < moves.size(); ++i) {
+            const Core::Move move = moves[i];
+            if (!move.is_capture() && !move.is_promotion()) continue;
+
+            Core::UndoInfo undo{};
+            pos.make_move(move, undo);
+            int score = -quiescence(pos, -beta, -alpha, limits, callbacks);
+            pos.unmake_move(move, undo);
+
+            if (should_stop(limits, callbacks)) return 0;
+
+            if (score >= beta) return beta;
+            if (score > alpha) alpha = score;
+        }
+
+        return alpha;
+    }
+
+    int EngineSearch::evaluate(const Core::Position& pos) {
+        return evaluator_.evaluate(pos);
+    }
+
     int EngineSearch::negamax(
         Core::Position& pos,
         int depth,
@@ -38,13 +80,15 @@ namespace Search {
         const Limits& limits,
         const Callbacks& callbacks
     ) {
-        if (should_stop(limits, callbacks)) return evaluator_.evaluate(pos);
-        if (ply >= MAX_PLY - 1) return evaluator_.evaluate(pos);
+
+        if ((nodes_ & 2047) == 0 && should_stop(limits, callbacks)) return evaluator_.evaluate(pos);
+
+        if (depth <= 0) return quiescence(pos, alpha, beta, limits, callbacks);
+
+        // Check for draws (repetition or 50-move rule)
+        if (ply > 0 && (pos.is_repetition() || pos.halfmove_clock() >= 100)) return 0;
 
         nodes_++;
-
-        if (depth <= 0) return evaluator_.evaluate(pos);
-        if (pos.is_repetition() || pos.halfmove_clock() >= 100) return 0;
 
         const int alphaOrig = alpha;
         TTEntry tte{};
@@ -60,10 +104,29 @@ namespace Search {
             }
         }
 
+        const bool inCheck = pos.in_check();
+
+        // Null Move Pruning (NMP)
+        // If we are not in check and our static position is strong (>= beta),
+        // we can try giving the opponent a free move. If they still can't raise
+        // their score above alpha, our position is likely so good we don't need to search deeper.
+        if (depth >= 3 && !inCheck && ply > 0) {
+            int staticEval = evaluator_.evaluate(pos);
+            if (staticEval >= beta) {
+                Core::UndoInfo undo;
+                pos.make_null_move(undo);
+                int score = -negamax(pos, depth - 1 - 2, -beta, -beta + 1, ply + 1, limits, callbacks);
+                pos.unmake_null_move(undo);
+
+                if (should_stop(limits, callbacks)) return 0;
+                if (score >= beta) return beta;
+            }
+        }
+
         Core::MoveList moves;
         Core::generate_legal_moves(pos, moves);
         if (moves.size() == 0) {
-            return pos.in_check() ? (-MATE_SCORE + ply) : 0;
+            return inCheck ? (-MATE_SCORE + ply) : 0;
         }
 
         ordering_.sort_moves(pos, moves, ttMove, ply);
@@ -71,12 +134,27 @@ namespace Search {
         const Core::Color us = pos.side_to_move();
         Core::Move bestMove = moves[0];
         int bestScore = -INF_SCORE;
-
+        bool foundPv = false;
         for (int i = 0; i < moves.size(); ++i) {
             const Core::Move move = moves[i];
             Core::UndoInfo undo{};
             pos.make_move(move, undo);
-            const int score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, limits, callbacks);
+
+            int score;
+            if (i == 0) {
+                score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, limits, callbacks);
+            } else {
+                // Principal Variation Search (PVS):
+                // Search subsequent moves with a null window (-alpha-1, -alpha) to prove they are bad.
+                score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, limits, callbacks);
+
+                // If our null-window search failed (score > alpha), it means this move *might* be better.
+                // We must re-search with the full window.
+                if (score > alpha && score < beta) {
+                    score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, limits, callbacks);
+                }
+            }
+
             pos.unmake_move(move, undo);
 
             if (should_stop(limits, callbacks)) return score;
@@ -88,18 +166,19 @@ namespace Search {
 
             if (score > alpha) {
                 alpha = score;
+                foundPv = true; // We found a new best move, so we have a PV
                 if (!move.is_capture()) ordering_.update_history(us, move, depth);
             }
 
             if (alpha >= beta) {
                 if (!move.is_capture()) ordering_.update_killers(ply, move);
-                break;
+                break; // Beta Cutoff
             }
         }
-
         TTFlag flag = TTFlag::EXACT;
         if (bestScore <= alphaOrig) flag = TTFlag::UPPER;
         else if (bestScore >= beta) flag = TTFlag::LOWER;
+
         tt_.store(pos.hash(), depth, bestScore, flag, bestMove);
 
         return bestScore;
@@ -125,12 +204,24 @@ namespace Search {
         bestMove = rootMoves[0];
 
         const Core::Color us = root.side_to_move();
+
         for (int i = 0; i < rootMoves.size(); ++i) {
             const Core::Move move = rootMoves[i];
 
             Core::UndoInfo undo{};
             root.make_move(move, undo);
-            const int score = -negamax(root, depth - 1, -beta, -alpha, 1, limits, callbacks);
+
+            int score;
+            if (i == 0) {
+                score = -negamax(root, depth - 1, -beta, -alpha, 1, limits, callbacks);
+            } else {
+                // PVS at root
+                score = -negamax(root, depth - 1, -alpha - 1, -alpha, 1, limits, callbacks);
+                if (score > alpha) {
+                    score = -negamax(root, depth - 1, -beta, -alpha, 1, limits, callbacks);
+                }
+            }
+
             root.unmake_move(move, undo);
 
             if (should_stop(limits, callbacks)) break;
@@ -177,6 +268,7 @@ namespace Search {
 
             Core::Move depthBest = out.bestMove;
             const int score = search_root(root, rootMoves, depth, depthBest, limits, callbacks);
+
             if (should_stop(limits, callbacks)) break;
 
             out.bestMove = depthBest;
@@ -192,9 +284,11 @@ namespace Search {
             }
         }
 
+        // If even depth 1 didn't finish (very tight deadline), fallback to static eval or first move
         if (out.completedDepth == 0) {
-            out.scoreCp = evaluator_.evaluate(root);
-            out.nodes = nodes_;
+             // Basic fallback: just return the first move and static eval
+             out.scoreCp = evaluator_.evaluate(root);
+             out.nodes = nodes_;
         }
 
         return out;
