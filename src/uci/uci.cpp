@@ -401,7 +401,7 @@ namespace UCI {
                 stopRequested_.store(false, std::memory_order_relaxed);
             }
 
-            void emit_info(int depth, int scoreCp, const Core::Move& pvMove, uint64_t nodes, int elapsedMs) {
+            void emit_info(int depth, int scoreCp, const Core::Move& pvMove, uint64_t nodes, int elapsedMs, double qsearchTtHitRate, double negamaxTtHitRate) {
                 const uint64_t nps = elapsedMs > 0 ? (nodes * 1000ULL) / static_cast<uint64_t>(elapsedMs) : 0ULL;
 
                 std::ostringstream os;
@@ -410,7 +410,9 @@ namespace UCI {
                    << " nodes " << nodes
                    << " nps " << nps
                    << " time " << elapsedMs
-                   << " pv " << move_to_uci(pvMove);
+                   << " pv " << move_to_uci(pvMove)
+                   << " QSearch TT hit rate: " << qsearchTtHitRate << "%"
+                   << " Negamax TT hit rate: " << negamaxTtHitRate << "%";
                 emit(os.str());
             }
 
@@ -474,10 +476,10 @@ namespace UCI {
                 };
 
                 callbacks.onInfo = [this, searchId, &softStop, &previousScore, &firstIteration, &currentOptimumMs, maximumTimeMs](
-                    int depth, int scoreCp, Core::Move pvMove, uint64_t nodes, int elapsedMs) {
+                    int depth, int scoreCp, Core::Move pvMove, uint64_t nodes, int elapsedMs, double qsearchTtHitRate, double negamaxTtHitRate) {
 
                     if (searchId != activeSearchId_.load(std::memory_order_relaxed)) return;
-                    emit_info(depth, scoreCp, pvMove, nodes, elapsedMs);
+                    emit_info(depth, scoreCp, pvMove, nodes, elapsedMs, qsearchTtHitRate, negamaxTtHitRate);
 
                     if (!firstIteration && currentOptimumMs > 0) {
                         // If the evaluation drops by more than 30 cp, extend the optimum time
@@ -516,10 +518,10 @@ namespace UCI {
             std::thread searchThread_;
 
             int threads_ = 1;
-            int hashMb_ = 64;
+            int hashMb_ = 6;
             int moveOverheadMs_ = 30;
             bool ponder_ = false;
-            Search::EngineSearch search_{64};
+            Search::EngineSearch search_{6};
         };
     }
 

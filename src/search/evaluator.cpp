@@ -49,6 +49,23 @@ namespace Search {
                     return 0;
             }
         }
+
+        int material_white_minus_black(const Core::Position& pos) {
+            int total = 0;
+            for (int c = Core::WHITE; c <= Core::BLACK; ++c) {
+                const Core::Color color = static_cast<Core::Color>(c);
+                const int sign = color == Core::WHITE ? 1 : -1;
+
+                for (int pt = Core::PAWN; pt <= Core::KING; ++pt) {
+                    Core::Bitboard bb = pos.pieces(static_cast<Core::PieceType>(pt), color);
+                    while (bb) {
+                        Core::pop_lsb(bb);
+                        total += sign * piece_value(static_cast<Core::PieceType>(pt));
+                    }
+                }
+            }
+            return total;
+        }
     }
 
     bool Evaluator::load_nnue(const std::string& path) {
@@ -65,7 +82,6 @@ namespace Search {
                 Core::Bitboard bb = pos.pieces(static_cast<Core::PieceType>(pt), color);
                 while (bb) {
                     const Core::Square sq = Core::pop_lsb(bb);
-                    total += sign * piece_value(static_cast<Core::PieceType>(pt));
                     total += sign * psqt_bonus(static_cast<Core::PieceType>(pt), sq, color);
                 }
             }
@@ -74,9 +90,16 @@ namespace Search {
     }
 
     int Evaluator::evaluate(const Core::Position& pos) const {
-        const int nnueStm = nnue_.evaluate(pos);
         const int psqtWb = psqt_white_minus_black(pos);
         const int psqtStm = pos.side_to_move() == Core::WHITE ? psqtWb : -psqtWb;
+
+        if (!nnue_.is_loaded()) {
+            const int materialWb = material_white_minus_black(pos);
+            const int materialStm = pos.side_to_move() == Core::WHITE ? materialWb : -materialWb;
+            return materialStm + psqtStm;
+        }
+
+        int nnue_adapter_evaluate_stm(const NNUE::Runtime&, const Core::Position&); const int nnueStm = nnue_adapter_evaluate_stm(nnue_, pos);
         return (nnueWeight_ * nnueStm + psqtWeight_ * psqtStm) / (nnueWeight_ + psqtWeight_);
     }
 }

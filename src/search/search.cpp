@@ -1,8 +1,16 @@
 #include "search.h"
 
 #include <algorithm>
+#include <iostream>
+#include <atomic>
 
 namespace Search {
+    namespace {
+        uint64_t q_probes = 0;
+        uint64_t q_hits = 0;
+        uint64_t n_probes = 0;
+        uint64_t n_hits = 0;
+    }
 
     EngineSearch::EngineSearch(size_t hashMb)
         : hashMb_(hashMb),
@@ -36,35 +44,89 @@ namespace Search {
         Core::Position& pos,
         int alpha,
         int beta,
+        int ply,
         const Limits& limits,
         const Callbacks& callbacks
     ) {
         if ((nodes_ & 2047) == 0 && should_stop(limits, callbacks)) return 0;
         nodes_++;
+
+        uint64_t key = pos.hash();
+        const TTEntry* tte = tt_.probe(key);
+        Core::Move ttMove = Core::Move::none();
+
+        q_probes++;
+        if (tte != nullptr) {
+            q_hits++;
+        }
+
+        if (tte != nullptr) {
+            ttMove = tte->move;
+            int ttScore = TranspositionTable::scoreFromTT(tte->score, ply);
+
+            if (tte->depth >= 0) {
+                if (tte->bound == BOUND_EXACT)                       return ttScore;
+                if (tte->bound == BOUND_LOWER && ttScore >= beta)    return ttScore;
+                if (tte->bound == BOUND_UPPER && ttScore <= alpha)   return ttScore;
+            }
+        }
+
         int standPat = evaluator_.evaluate(pos);
-        if (standPat >= beta) return beta;
+        int originalAlpha = alpha;
+
+        if (standPat >= beta) {
+            tt_.store(key, standPat, Core::Move::none(), 0, BOUND_LOWER, ply);
+            return standPat;
+        }
         if (standPat > alpha) alpha = standPat;
+
+        // Delta Pruning
+        const int DELTA = 975;
+        if (standPat + DELTA < alpha) {
+            tt_.store(key, alpha, Core::Move::none(), 0, BOUND_UPPER, ply);
+            return alpha;
+        }
 
         Core::MoveList moves;
         Core::generate_legal_moves(pos, moves);
-        ordering_.sort_moves(pos, moves, Core::Move::none(), 0);
-
+        
+        Core::MoveList captures;
         for (int i = 0; i < moves.size(); ++i) {
-            const Core::Move move = moves[i];
-            if (!move.is_capture() && !move.is_promotion()) continue;
+            if (moves[i].is_capture() || moves[i].is_promotion()) {
+                captures.push_back(moves[i]);
+            }
+        }
+        
+        ordering_.sort_moves(pos, captures, ttMove, ply);
+
+        Core::Move bestMove = Core::Move::none();
+        int bestScore = standPat;
+
+        for (int i = 0; i < captures.size(); ++i) {
+            const Core::Move move = captures[i];
 
             Core::UndoInfo undo{};
             pos.make_move(move, undo);
-            int score = -quiescence(pos, -beta, -alpha, limits, callbacks);
+            int score = -quiescence(pos, -beta, -alpha, ply + 1, limits, callbacks);
             pos.unmake_move(move, undo);
 
             if (should_stop(limits, callbacks)) return 0;
 
-            if (score >= beta) return beta;
+            if (score > bestScore) {
+                bestScore = score;
+                bestMove = move;
+            }
+            if (score >= beta) {
+                tt_.store(key, score, move, 0, BOUND_LOWER, ply);
+                return score;
+            }
             if (score > alpha) alpha = score;
         }
 
-        return alpha;
+        TTBound bound = (bestScore <= originalAlpha) ? BOUND_UPPER : BOUND_EXACT;
+        tt_.store(key, bestScore, bestMove, 0, bound, ply);
+
+        return bestScore;
     }
 
     int EngineSearch::evaluate(const Core::Position& pos) {
@@ -83,28 +145,38 @@ namespace Search {
 
         if ((nodes_ & 2047) == 0 && should_stop(limits, callbacks)) return evaluator_.evaluate(pos);
 
-        if (depth <= 0) return quiescence(pos, alpha, beta, limits, callbacks);
+        if (depth <= 0) return quiescence(pos, alpha, beta, ply, limits, callbacks);
 
         // Check for draws (repetition or 50-move rule)
         if (ply > 0 && (pos.is_repetition() || pos.halfmove_clock() >= 100)) return 0;
 
         nodes_++;
 
-        const int alphaOrig = alpha;
-        TTEntry tte{};
+        const int originalAlpha = alpha;
+        const bool isPVNode = (beta - alpha > 1);
+        
+        const bool inCheck = pos.in_check();
+
+        uint64_t key = pos.hash();
+        const TTEntry* tte = tt_.probe(key);
         Core::Move ttMove = Core::Move::none();
-        if (tt_.probe(pos.hash(), tte)) {
-            ttMove = Core::Move(static_cast<uint16_t>(tte.bestMove & 0xFFFFu));
-            if (tte.depth >= depth) {
-                const int ttScore = tte.score;
-                if (tte.flag == TTFlag::EXACT) return ttScore;
-                if (tte.flag == TTFlag::LOWER) alpha = std::max(alpha, ttScore);
-                else if (tte.flag == TTFlag::UPPER) beta = std::min(beta, ttScore);
-                if (alpha >= beta) return ttScore;
-            }
+
+        n_probes++;
+        if (tte != nullptr) {
+            n_hits++;
         }
 
-        const bool inCheck = pos.in_check();
+        if (tte != nullptr) {
+            ttMove = tte->move;
+
+            if (!isPVNode && tte->depth >= depth) {
+                int ttScore = TranspositionTable::scoreFromTT(tte->score, ply);
+
+                if (tte->bound == BOUND_EXACT) { return ttScore; }
+                if (tte->bound == BOUND_LOWER && ttScore >= beta) { return ttScore; }
+                if (tte->bound == BOUND_UPPER && ttScore <= alpha) { return ttScore; }
+            }
+        }
 
         // Null Move Pruning (NMP)
         // If we are not in check and our static position is strong (>= beta),
@@ -144,13 +216,18 @@ namespace Search {
             if (i == 0) {
                 score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, limits, callbacks);
             } else {
-                // Principal Variation Search (PVS):
-                // Search subsequent moves with a null window (-alpha-1, -alpha) to prove they are bad.
-                score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, limits, callbacks);
+                // Compute LMR reduction for late, quiet, non-check moves
+                int reduction = 0;
+                if (depth >= 3 && i >= 3 && !move.is_capture() && !move.is_promotion() && !inCheck) {
+                    reduction = 1;
+                    if (depth >= 6) reduction = 2;
+                }
 
-                // If our null-window search failed (score > alpha), it means this move *might* be better.
-                // We must re-search with the full window.
-                if (score > alpha && score < beta) {
+                // Null-window search at reduced depth
+                score = -negamax(pos, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1, limits, callbacks);
+
+                // Re-search at full depth if reduced search beat alpha, or if PVS null window failed high
+                if (score > alpha) {
                     score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, limits, callbacks);
                 }
             }
@@ -175,11 +252,16 @@ namespace Search {
                 break; // Beta Cutoff
             }
         }
-        TTFlag flag = TTFlag::EXACT;
-        if (bestScore <= alphaOrig) flag = TTFlag::UPPER;
-        else if (bestScore >= beta) flag = TTFlag::LOWER;
+        TTBound bound;
+        if (bestScore <= originalAlpha) {
+            bound = BOUND_UPPER;
+        } else if (bestScore >= beta) {
+            bound = BOUND_LOWER;
+        } else {
+            bound = BOUND_EXACT;
+        }
 
-        tt_.store(pos.hash(), depth, bestScore, flag, bestMove);
+        tt_.store(key, bestScore, bestMove, depth, bound, ply);
 
         return bestScore;
     }
@@ -192,9 +274,8 @@ namespace Search {
         const Limits& limits,
         const Callbacks& callbacks
     ) {
-        TTEntry tte{};
-        Core::Move ttMove = Core::Move::none();
-        if (tt_.probe(root.hash(), tte)) ttMove = Core::Move(static_cast<uint16_t>(tte.bestMove & 0xFFFFu));
+        const TTEntry* tte = tt_.probe(root.hash());
+        Core::Move ttMove = tte ? tte->move : Core::Move::none();
 
         ordering_.sort_moves(root, rootMoves, ttMove, 0);
 
@@ -238,7 +319,7 @@ namespace Search {
         }
 
         if (bestScore > -INF_SCORE) {
-            tt_.store(root.hash(), depth, bestScore, TTFlag::EXACT, bestMove);
+            tt_.store(root.hash(), bestScore, bestMove, depth, BOUND_EXACT, 0);
         }
 
         return bestScore;
@@ -267,6 +348,10 @@ namespace Search {
             if (should_stop(limits, callbacks)) break;
 
             Core::Move depthBest = out.bestMove;
+            q_probes = 0;
+            q_hits = 0;
+            n_probes = 0;
+            n_hits = 0;
             const int score = search_root(root, rootMoves, depth, depthBest, limits, callbacks);
 
             if (should_stop(limits, callbacks)) break;
@@ -280,10 +365,13 @@ namespace Search {
                 const int elapsedMs = static_cast<int>(
                     std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started_).count()
                 );
-                callbacks.onInfo(depth, score, depthBest, nodes_, elapsedMs);
+                const double qsearchTtHitRate = q_probes > 0 ? (100.0 * q_hits / q_probes) : 0.0;
+                const double negamaxTtHitRate = n_probes > 0 ? (100.0 * n_hits / n_probes) : 0.0;
+                callbacks.onInfo(depth, score, depthBest, nodes_, elapsedMs, qsearchTtHitRate, negamaxTtHitRate);
             }
         }
 
+        // ...
         // If even depth 1 didn't finish (very tight deadline), fallback to static eval or first move
         if (out.completedDepth == 0) {
              // Basic fallback: just return the first move and static eval

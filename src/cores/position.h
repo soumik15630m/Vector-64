@@ -11,7 +11,7 @@
 namespace Core {
 
     struct UndoInfo {
-        uint64_t zobristDelta;
+        uint64_t savedHash;
         int castlingRights;
         int halfmoveClock;
         Square epSquare;

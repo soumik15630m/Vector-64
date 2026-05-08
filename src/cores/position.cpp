@@ -256,7 +256,7 @@ namespace Core {
         ui.castlingRights = castlingRights;
         ui.epSquare = epSquare;
         ui.halfmoveClock = halfmoveClock;
-        ui.zobristDelta = zobristHash;
+        ui.savedHash = zobristHash;
 
         bool resetClock = false;
         if (movingPiece == PAWN) resetClock = true;
@@ -317,7 +317,6 @@ namespace Core {
         if (sideToMove == BLACK) fullmoveNumber++;
         sideToMove = ~sideToMove;
         zobristHash ^= Zobrist::side;
-        ui.zobristDelta ^= zobristHash;
 
         gamePly++;
         if (gamePly < MAX_GAME_PLY) history[gamePly] = zobristHash;
@@ -329,7 +328,7 @@ namespace Core {
         sideToMove = ~sideToMove;
         if (sideToMove == BLACK) fullmoveNumber--;
 
-        zobristHash ^= ui.zobristDelta;
+        zobristHash = ui.savedHash;
         epSquare = ui.epSquare;
         castlingRights = ui.castlingRights;
         halfmoveClock = ui.halfmoveClock;
@@ -392,7 +391,7 @@ namespace Core {
         ui.castlingRights = castlingRights;
         ui.epSquare = epSquare;
         ui.halfmoveClock = halfmoveClock;
-        ui.zobristDelta = zobristHash;
+        ui.savedHash = zobristHash;
 
         if (epSquare != SQ_NONE) {
             zobristHash ^= Zobrist::enpassant[file_of(epSquare)];
@@ -401,7 +400,6 @@ namespace Core {
 
         sideToMove = ~sideToMove;
         zobristHash ^= Zobrist::side;
-        ui.zobristDelta ^= zobristHash;
         gamePly++;
         if (gamePly < MAX_GAME_PLY) history[gamePly] = zobristHash;
     }
@@ -409,7 +407,7 @@ namespace Core {
     void Position::unmake_null_move(const UndoInfo& ui) {
         gamePly--;
         sideToMove = ~sideToMove;
-        zobristHash ^= ui.zobristDelta;
+        zobristHash = ui.savedHash;
         epSquare = ui.epSquare;
         ASSERT_CONSISTENCY(*this);
     }

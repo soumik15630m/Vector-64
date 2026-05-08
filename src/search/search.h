@@ -22,7 +22,7 @@ namespace Search {
 
     struct Callbacks {
         std::function<bool()> shouldStop;
-        std::function<void(int depth, int scoreCp, Core::Move pvMove, uint64_t nodes, int elapsedMs)> onInfo;
+        std::function<void(int depth, int scoreCp, Core::Move pvMove, uint64_t nodes, int elapsedMs, double qsearchTtHitRate, double negamaxTtHitRate)> onInfo;
     };
 
     struct Result {
@@ -34,7 +34,7 @@ namespace Search {
 
     class EngineSearch {
     public:
-        explicit EngineSearch(size_t hashMb = 64);
+        explicit EngineSearch(size_t hashMb = 6);
 
         void set_hash_mb(size_t hashMb);
         void clear();
@@ -60,7 +60,7 @@ namespace Search {
             const Callbacks& callbacks
         );
 
-        int quiescence(Core::Position& pos, int alpha, int beta, const Limits& limits, const Callbacks& callbacks);
+        int quiescence(Core::Position& pos, int alpha, int beta, int ply, const Limits& limits, const Callbacks& callbacks);
 
         int search_root(
             Core::Position& root,
@@ -75,7 +75,7 @@ namespace Search {
         static constexpr int MATE_SCORE = 900000;
         static constexpr int MAX_PLY = 128;
 
-        size_t hashMb_ = 64;
+        size_t hashMb_ = 6;
         uint64_t nodes_ = 0;
         Clock::time_point started_{};
 

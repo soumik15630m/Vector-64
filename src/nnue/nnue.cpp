@@ -460,7 +460,7 @@ namespace NNUE {
         return static_cast<int>(out / OUTPUT_SCALE);
     }
 
-    int Runtime::infer_side_to_move_scaled(const Core::Position& pos) const {
+    int Runtime::infer_side_to_move_scaled(const Core::Position& pos, Core::Color perspective) const {
         const Core::Bitboard whiteKing = pos.pieces(Core::KING, Core::WHITE);
         const Core::Bitboard blackKing = pos.pieces(Core::KING, Core::BLACK);
         if (whiteKing == 0 || blackKing == 0) return 0;
@@ -495,8 +495,8 @@ namespace NNUE {
             }
         }
 
-        const auto& us = pos.side_to_move() == Core::WHITE ? whiteAcc : blackAcc;
-        const auto& them = pos.side_to_move() == Core::WHITE ? blackAcc : whiteAcc;
+        const auto& us = perspective == Core::WHITE ? whiteAcc : blackAcc;
+        const auto& them = perspective == Core::WHITE ? blackAcc : whiteAcc;
 
         std::array<float, HIDDEN_SIZE> x0{};
         std::array<float, DENSE_L1_SIZE> x1{};
@@ -596,11 +596,23 @@ namespace NNUE {
         if (!loaded_) return material_proxy_stm(pos);
 
         if (useScaledInference_) {
-            return infer_side_to_move_scaled(pos);
+            return infer_side_to_move_scaled(pos, pos.side_to_move());
         }
 
         Accumulator512 accum{};
         rebuild_accumulator(pos, accum);
         return infer_side_to_move(accum, pos.side_to_move());
+    }
+
+    int Runtime::evaluate_perspective(const Core::Position& pos, Core::Color perspective) const {
+        if (!loaded_) return material_proxy_stm(pos);
+
+        if (useScaledInference_) {
+            return infer_side_to_move_scaled(pos, perspective);
+        }
+
+        Accumulator512 accum{};
+        rebuild_accumulator(pos, accum);
+        return infer_side_to_move(accum, perspective);
     }
 }

@@ -92,6 +92,7 @@ namespace NNUE {
 
         // Returns a side-to-move centipawn estimate.
         int evaluate(const Core::Position& pos) const;
+        int evaluate_perspective(const Core::Position& pos, Core::Color perspective) const;
 
     private:
         struct QuantScales {
@@ -127,7 +128,7 @@ namespace NNUE {
         ) const;
         void rebuild_accumulator(const Core::Position& pos, Accumulator512& accum) const;
         int infer_side_to_move(const Accumulator512& accum, Core::Color stm) const;
-        int infer_side_to_move_scaled(const Core::Position& pos) const;
+        int infer_side_to_move_scaled(const Core::Position& pos, Core::Color perspective) const;
         bool try_load_sidecar_scales(const std::string& path);
         int material_proxy_stm(const Core::Position& pos) const;
 

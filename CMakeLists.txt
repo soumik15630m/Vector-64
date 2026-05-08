@@ -21,6 +21,7 @@ set(CORE_SOURCES
         src/search/evaluator.cpp
         src/search/search.cpp
         src/nnue/nnue.cpp
+        src/nnue/nnue_adapter.cpp
 )
 
 set(CORE_HEADERS
@@ -54,6 +55,12 @@ target_link_libraries(ChessEngine chess_core)
 set_target_properties(ChessEngine PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
-message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+
+
+add_executable(test_zobrist test_zobrist.cpp)
+target_link_libraries(test_zobrist chess_core)
+set_target_properties(test_zobrist PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
 message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
