@@ -8,19 +8,19 @@
 
 namespace Search {
 
-    class Evaluator {
-    public:
-        bool load_nnue(const std::string& path);
+class Evaluator {
+public:
+  bool load_nnue(const std::string &path);
 
-        // Side-to-move centipawn score.
-        int evaluate(const Core::Position& pos) const;
+  // Side-to-move centipawn score.
+  int evaluate(const Core::Position &pos) const;
 
-    private:
-        NNUE::Runtime nnue_{};
-        int nnueWeight_ = 8;
-        int psqtWeight_ = 2;
-    };
+private:
+  NNUE::Runtime nnue_{};
+  int nnueWeight_ = 8;
+  int psqtWeight_ = 2;
+};
 
-}
+} // namespace Search
 
 #endif

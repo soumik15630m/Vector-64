@@ -217,6 +217,33 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure
 
   # ---- safety & style ----
+  clang-format:
+    name: lint · clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Check formatting (whole tree)
+        run: git ls-files '*.cpp' '*.h' | xargs clang-format --dry-run --Werror
+
+  clang-tidy:
+    name: lint · clang-tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-tidy-18
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy-18
+      - name: Configure (export compile commands)
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DENGINE_NATIVE=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Run clang-tidy on engine sources
+        run: >
+          git ls-files 'src/*.cpp' 'app/*.cpp'
+          | xargs clang-tidy-18 -p build
+          --warnings-as-errors='bugprone-*,performance-*,modernize-*'
+
   sanitizers:
     name: safety · asan + ubsan
     runs-on: ubuntu-latest

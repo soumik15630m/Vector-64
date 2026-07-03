@@ -3,7 +3,7 @@
 
 namespace UCI {
 
-    int run();
+int run();
 
 }
 

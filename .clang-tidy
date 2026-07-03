@@ -1,7 +1,18 @@
-# Static analysis for the C++ engine. A focused, low-noise set — run locally
-# with: clang-tidy -p build <file>. Not enforced in CI yet.
+# Static analysis for the C++ engine. A focused, deterministic set enforced in
+# CI (see the `lint · clang-tidy` job). Run locally with:
+#   clang-tidy -p build <file>
+#
+# The path-sensitive clang-analyzer-* family is intentionally NOT enabled: it is
+# version-sensitive and reports false positives on our fill-to-`size` fixed
+# stack arrays (the staged move picker fills scores[0..size) before reading the
+# same range, which the symbolic engine cannot correlate across loops). Run it
+# separately via `scan-build` / `clang --analyze` when doing a deep pass.
+#
+# bugprone-exception-escape is disabled: it fires on any main()/thread entry
+# that allocates or does I/O (its catch handlers are themselves "may-throw"),
+# so it cannot be satisfied without gutting real work. main() and the search
+# thread still carry defensive top-level try/catch guards regardless.
 Checks: >
-  clang-analyzer-*,
   bugprone-*,
   performance-*,
   modernize-use-nullptr,
@@ -9,7 +20,8 @@ Checks: >
   modernize-use-using,
   -bugprone-easily-swappable-parameters,
   -bugprone-narrowing-conversions,
-  -bugprone-implicit-widening-of-multiplication-result
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-exception-escape
 WarningsAsErrors: ''
 HeaderFilterRegex: '^src/.*'
 FormatStyle: file

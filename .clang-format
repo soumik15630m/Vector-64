@@ -1,22 +1,2 @@
-# C++ formatting for the engine. Matches the existing 4-space, attached-brace,
-# left-pointer house style. Apply with: clang-format -i <files>
----
-Language: Cpp
+# Standard LLVM style.
 BasedOnStyle: LLVM
-IndentWidth: 4
-TabWidth: 4
-UseTab: Never
-ColumnLimit: 100
-PointerAlignment: Left
-DerivePointerAlignment: false
-NamespaceIndentation: All
-AccessModifierOffset: -4
-BreakBeforeBraces: Attach
-AllowShortFunctionsOnASingleLine: Inline
-AllowShortIfStatementsOnASingleLine: Never
-AllowShortLoopsOnASingleLine: false
-AllowShortCaseLabelsOnASingleLine: false
-SortIncludes: false
-SpacesBeforeTrailingComments: 2
-AlignAfterOpenBracket: Align
-IndentCaseLabels: false
