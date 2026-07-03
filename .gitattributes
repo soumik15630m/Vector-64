@@ -1,0 +1,3 @@
+# Shell scripts must keep LF line endings so they run on Linux/macOS/ARM hosts
+# regardless of the cloner's core.autocrlf setting.
+*.sh text eol=lf
