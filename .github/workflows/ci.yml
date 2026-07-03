@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
 jobs:
   # C++ test suite: perft (per position, per depth), state/eval invariants and
   # the search signature — each a named ctest — across four compilers.
@@ -13,10 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,  cc: gcc,   cxx: g++ }
-          - { os: ubuntu-latest,  cc: clang, cxx: clang++ }
-          - { os: macos-latest }
-          - { os: windows-latest }
+          - { os: ubuntu-latest,  cc: gcc,   cxx: g++,     id: linux-gcc }
+          - { os: ubuntu-latest,  cc: clang, cxx: clang++, id: linux-clang }
+          - { os: macos-latest,                            id: macos }
+          - { os: windows-latest,                          id: windows }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +38,7 @@ jobs:
         run: cmake --build build -j
       - name: Test (Unix)
         if: runner.os != 'Windows'
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --output-junit "$GITHUB_WORKSPACE/ctest.xml"
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
@@ -43,10 +48,16 @@ jobs:
         run: cmake --build build --config Release
       - name: Test (Windows)
         if: runner.os == 'Windows'
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: ctest --test-dir build -C Release --output-on-failure --output-junit "${{ github.workspace }}/ctest.xml"
 
-  # Memory-safety / undefined-behaviour sweep of the make-unmake, movegen,
-  # NNUE and search paths.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ matrix.id }}
+          path: ctest.xml
+          if-no-files-found: warn
+
   sanitizers:
     name: linux asan+ubsan
     runs-on: ubuntu-latest
@@ -66,7 +77,6 @@ jobs:
         working-directory: build
         run: printf "setoption name Threads value 1\nbench 8\nquit\n" | ./bin/ChessEngine
 
-  # Black-box UCI behaviour tests that drive the built engine binary.
   integration:
     name: uci behaviour
     runs-on: ubuntu-latest
@@ -84,9 +94,14 @@ jobs:
       - name: UCI behaviour suite
         env:
           ENGINE_BIN: build/bin/ChessEngine
-        run: python -m pytest tests/python/test_uci_behavior.py -v
+        run: python -m pytest tests/python/test_uci_behavior.py -v --junitxml=pytest-uci.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-uci
+          path: pytest-uci.xml
 
-  # Python lint, types and the pure-Python contract tests.
   python-quality:
     name: python lint + types + unit
     runs-on: ubuntu-latest
@@ -102,4 +117,32 @@ jobs:
       - name: Mypy (types)
         run: python -m mypy tools tests/python
       - name: Pytest (contract tests)
-        run: python -m pytest tests/python/test_feature_encoding.py -v
+        run: python -m pytest tests/python/test_feature_encoding.py -v --junitxml=pytest-unit.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-unit
+          path: pytest-unit.xml
+
+  # Aggregate every JUnit report into one "Test Results" check so all ~48
+  # named tests are visible with pass/fail before merging.
+  test-results:
+    name: test results
+    needs: [build-and-test, integration, python-quality]
+    runs-on: ubuntu-latest
+    if: always()
+    permissions:
+      checks: write
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: results
+          pattern: results-*
+      - name: Publish test results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: results/**/*.xml
+          check_name: "Test Results (perft + invariants + UCI + unit)"
+          comment_mode: "off"
