@@ -3,7 +3,7 @@
 
 # Upper bounds keep the cu121 index and the quantized export behaviour
 # reproducible; bump deliberately, not implicitly.
-torch>=2.2,<2.6
+torch>=2.12.1,<2.13
 numpy>=1.23,<3
 tqdm>=4.60,<5
 zstandard>=0.22,<0.24
