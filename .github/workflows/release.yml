@@ -1,0 +1,81 @@
+name: Release
+
+# Build portable binaries for each platform and attach them to a GitHub Release
+# when a version tag is pushed. Binaries use fixed micro-architecture levels
+# (never -march=native), so they run on any CPU meeting that level.
+#
+#   git tag v1.0.0 && git push origin v1.0.0
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:   # allow manual dry-runs
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # x86-64-v3 = AVX2 + BMI2 → PEXT bitboards + AVX2 NNUE (2015+ CPUs)
+          - { os: ubuntu-latest,    asset: STK-Vector-64-linux-x86-64-v3,        flags: "-DENGINE_NATIVE=OFF -DCMAKE_CXX_FLAGS=-march=x86-64-v3" }
+          # x86-64-v2 = SSE4.2 + POPCNT → magic bitboards + scalar NNUE (2009+)
+          - { os: ubuntu-latest,    asset: STK-Vector-64-linux-x86-64-v2,        flags: "-DENGINE_NATIVE=OFF -DCMAKE_CXX_FLAGS=-march=x86-64-v2" }
+          - { os: ubuntu-24.04-arm, asset: STK-Vector-64-linux-arm64,            flags: "-DENGINE_NATIVE=OFF" }
+          - { os: macos-latest,     asset: STK-Vector-64-macos-arm64,            flags: "-DENGINE_NATIVE=OFF" }
+          # Windows binary is built with MSVC /arch:AVX2 (requires an AVX2 CPU)
+          - { os: windows-latest,   asset: STK-Vector-64-windows-x86-64-avx2.exe, flags: "" }
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure & build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.flags }}
+          cmake --build build -j
+
+      - name: Configure & build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S . -B build
+          cmake --build build --config Release
+
+      - name: Sanity check (perft)
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then EXE=build/bin/Release/ChessEngine.exe; else EXE=build/bin/ChessEngine; fi
+          "$EXE" --perft | grep "0 Failed"
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ "${{ runner.os }}" = "Windows" ]; then cp build/bin/Release/ChessEngine.exe "dist/${{ matrix.asset }}"; else cp build/bin/ChessEngine "dist/${{ matrix.asset }}"; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**
+          generate_release_notes: true
+          fail_on_unmatched_files: true

@@ -55,6 +55,10 @@ jobs:
         working-directory: build
         run: printf "bench 8\nquit\n" | ./bin/ChessEngine
 
+      - name: Bench signature (Unix)
+        if: runner.os != 'Windows'
+        run: bash tools/bench_signature.sh build/bin/ChessEngine
+
       - name: UCI smoke (Unix)
         if: runner.os != 'Windows'
         run: python tests/uci_smoke.py build/bin/ChessEngine
@@ -86,6 +90,11 @@ jobs:
         shell: pwsh
         run: '"bench 8`nquit" | .\bin\Release\ChessEngine.exe'
 
+      - name: Bench signature (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: bash tools/bench_signature.sh build/bin/Release/ChessEngine.exe
+
       - name: UCI smoke (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -109,3 +118,20 @@ jobs:
       - name: Bench under sanitizers
         working-directory: build
         run: printf "setoption name Threads value 1\nbench 8\nquit\n" | ./bin/ChessEngine
+
+  python-quality:
+    name: python lint + types + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install dev tooling
+        run: python -m pip install -r requirements-dev.txt
+      - name: Ruff (lint)
+        run: python -m ruff check tools tests
+      - name: Mypy (types)
+        run: python -m mypy tools tests/python
+      - name: Pytest
+        run: python -m pytest tests/python

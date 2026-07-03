@@ -72,20 +72,17 @@ and tools/run_pipeline.py.
 from __future__ import annotations
 
 import argparse
-import glob
 import io
 import json
 import math
-import os
 import random
 import re
 import signal
 import struct
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch

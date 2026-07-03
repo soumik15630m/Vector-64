@@ -20,7 +20,7 @@ def check_gpu():
             y = torch.rand(10000, 10000).to(device)
 
             start_time = time.time()
-            z = torch.matmul(x, y)
+            torch.matmul(x, y)
             end_time = time.time()
 
             print(f"   Success! Computation took {end_time - start_time:.4f} seconds.")

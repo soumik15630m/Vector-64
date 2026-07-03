@@ -29,7 +29,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from train_vector64 import TOTAL_FEATURES, Vector64NNUE
+from train_vector64 import Vector64NNUE
 
 
 PIECE_BUCKET = {

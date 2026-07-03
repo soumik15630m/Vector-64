@@ -5,14 +5,13 @@ import argparse
 import importlib
 import io
 import json
-import math
 import os
 import shutil
 import struct
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import train_nnue as nnue
 

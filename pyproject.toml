@@ -1,0 +1,47 @@
+# Python tooling config for the training / export utilities under tools/.
+# The C++ engine is built with CMake; this only governs the Python side.
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+extend-exclude = ["build", "build-*", "cmake-build-*", "artifacts", "tools/data"]
+
+[tool.ruff.lint]
+# Enforce correctness rules now: pycodestyle errors, pyflakes, warnings.
+# Style rules (import sorting "I", pyupgrade "UP", bugbear "B") are staged for
+# after the training scripts are cleaned up — add them to `select` then.
+select = ["E", "F", "W"]
+# The training scripts predate this config; long lines are tolerated for now.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E402"]  # tests may tweak sys.path before imports
+
+[tool.mypy]
+python_version = "3.10"
+# torch / numpy / zstandard ship partial or no stubs; don't fail on them.
+ignore_missing_imports = true
+warn_unused_ignores = false
+warn_redundant_casts = true
+namespace_packages = true
+explicit_package_bases = true
+
+# The training/export scripts are a work in progress. mypy runs over them but
+# their type errors don't fail CI yet — flip ignore_errors off (module by
+# module) as they're cleaned up during the training-pipeline overhaul. The test
+# suite (tests/python) is type-checked strictly.
+[[tool.mypy.overrides]]
+module = "tools.*"
+disallow_untyped_defs = false
+check_untyped_defs = false
+ignore_errors = true
+
+# Don't descend into third-party test/runtime internals.
+[[tool.mypy.overrides]]
+module = ["pytest.*", "_pytest.*"]
+follow_imports = "skip"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+addopts = "-q"

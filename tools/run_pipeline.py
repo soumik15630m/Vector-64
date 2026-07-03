@@ -7,7 +7,6 @@ import io
 import json
 import math
 import os
-import sys
 import time
 from collections import Counter
 from datetime import datetime
@@ -516,8 +515,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         colors,
     )
 
-    extraction_stats: Dict[str, Any] = {}
-    batching_stats: Dict[str, Any] = {}
     result: Optional[nnue.TrainResult] = None
 
     try:
@@ -533,7 +530,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ensure_file(EXTRACTED_PATH, "Missing extracted positions file for --skip-extraction")
             print(f"resuming from {EXTRACTED_PATH}")
         else:
-            extraction_stats = extract_positions(
+            extract_positions(
                 data_source=args.data,
                 output_path=EXTRACTED_PATH,
                 max_positions=args.max_positions,
@@ -553,7 +550,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ensure_shards(SHARDS_DIR)
             print(f"resuming from {SHARDS_DIR}")
         else:
-            batching_stats = build_shards(
+            build_shards(
                 extracted_path=EXTRACTED_PATH,
                 out_dir=SHARDS_DIR,
                 shard_size=args.shard_size,

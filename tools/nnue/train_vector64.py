@@ -162,7 +162,8 @@ def load_dataset(
         collected = {k: [] for k in keys}
 
         for i, f in enumerate(files):
-            if i % 20 == 0: print(f"  Loading shard {i}/{len(files)}...")
+            if i % 20 == 0:
+                print(f"  Loading shard {i}/{len(files)}...")
             with np.load(f, allow_pickle=True) as shard:
                 for k in keys:
                     collected[k].append(shard[k])
