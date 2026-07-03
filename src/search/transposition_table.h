@@ -44,7 +44,9 @@ namespace Search {
     // 16 bytes so four entries tile one 64-byte cache line exactly and no
     // probe ever straddles two lines. The high 32 bits of the Zobrist key
     // verify identity; the low bits pick the bucket, so the verification
-    // and index bits are disjoint.
+    // and index bits are disjoint. A SoA + SIMD-probe variant was measured
+    // and rejected: the probe is fetch-bound, not compare-bound, so the SIMD
+    // compare only lengthened the critical path on cache-resident hits.
     struct TTEntry {
         uint32_t key32;
         int32_t  score;
@@ -126,20 +128,21 @@ namespace Search {
                 }
             }
 
-            const bool sameKey = slot->bound() != BOUND_NONE && slot->key32 == key32;
-            if (!sameKey || bound == BOUND_EXACT || depth + 4 >= slot->depth) {
-                slot->key32 = key32;
-                slot->score = scoreToTT(score, ply);
-                slot->eval = static_cast<int16_t>(std::clamp(eval, TT_EVAL_NONE, INT16_MAX + 0));
-                slot->move16 = move.raw();
-                slot->depth = static_cast<uint8_t>(std::clamp(depth, 0, 255));
-                slot->ageBound = static_cast<uint8_t>((generation_ << 2) | bound);
+            TTEntry& e = *slot;
+            const bool sameKey = e.bound() != BOUND_NONE && e.key32 == key32;
+            if (!sameKey || bound == BOUND_EXACT || depth + 4 >= e.depth) {
+                e.key32 = key32;
+                e.score = scoreToTT(score, ply);
+                e.eval = static_cast<int16_t>(std::clamp(eval, TT_EVAL_NONE, INT16_MAX + 0));
+                e.move16 = move.raw();
+                e.depth = static_cast<uint8_t>(std::clamp(depth, 0, 255));
+                e.ageBound = static_cast<uint8_t>((generation_ << 2) | bound);
             } else {
                 // Keep the deeper data but refresh its age and fill gaps.
-                slot->ageBound = static_cast<uint8_t>((generation_ << 2) | slot->bound());
-                if (move.is_ok() && !slot->move().is_ok()) slot->move16 = move.raw();
-                if (slot->eval == TT_EVAL_NONE && eval != TT_EVAL_NONE) {
-                    slot->eval = static_cast<int16_t>(std::clamp(eval, TT_EVAL_NONE, INT16_MAX + 0));
+                e.ageBound = static_cast<uint8_t>((generation_ << 2) | e.bound());
+                if (move.is_ok() && !e.move().is_ok()) e.move16 = move.raw();
+                if (e.eval == TT_EVAL_NONE && eval != TT_EVAL_NONE) {
+                    e.eval = static_cast<int16_t>(std::clamp(eval, TT_EVAL_NONE, INT16_MAX + 0));
                 }
             }
         }

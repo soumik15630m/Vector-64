@@ -140,8 +140,17 @@ int main() {
 
             if (!check_movegen_equivalence(pos, rng, game, ply)) return 1;
 
+            // key_after(m) must equal the real post-move hash, or the search's
+            // pre-make_move TT prefetch would target the wrong bucket.
+            const uint64_t predicted = pos.key_after(move);
+
             UndoInfo undo{};
             pos.make_move(move, undo);
+            if (pos.hash() != predicted) {
+                std::printf("FAIL game %d ply %d: key_after != post-move hash\n%s\n",
+                            game, ply, pos.toFEN().c_str());
+                return 1;
+            }
             if (!check_against_rebuild(pos, game, ply)) return 1;
 
             pos.unmake_move(move, undo);

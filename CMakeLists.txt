@@ -11,6 +11,15 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(ENGINE_NATIVE "Tune codegen for the build machine (-march=native)" ON)
+
+# Perft-only optimization: a precomputed enemy king-danger map speeds up perft
+# (~+3%) because it amortizes over every king move, but it regresses real
+# search (king moves are rare there), so it is off by default. Enable only for
+# perft benchmarking: -DOPT_KING_DANGER=ON.
+option(OPT_KING_DANGER "Precompute enemy king-danger map (perft-only win)" OFF)
+if(OPT_KING_DANGER)
+    add_compile_definitions(ENGINE_KING_DANGER)
+endif()
 # Profile-guided optimization. Configure with -DENGINE_PGO=generate, build,
 # run `bench 12`, then reconfigure with -DENGINE_PGO=use and rebuild.
 set(ENGINE_PGO "off" CACHE STRING "PGO mode: off | generate | use")

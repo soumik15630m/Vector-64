@@ -208,6 +208,7 @@ namespace Core {
         const Color them = ~us;
 
         NodeLegality nl{};
+        nl.pos = &pos;
         nl.us = us;
         // A legal position always has a king; guard the degenerate case
         // (illegal FEN from a GUI) so lsb(0) can never produce a garbage
@@ -224,21 +225,51 @@ namespace Core {
 
         nl.checkers = pos.attackers_to(nl.kingSq) & pos.pieces(them);
 
-        // With PEXT these two slider lookups are cheap enough that eager
-        // computation beats deferring it (measured — lazy pins regressed).
+        // Pins are computed lazily (see ensure_pins): nodes that cut off on
+        // the TT move never generate, so they never pay for pin detection.
         nl.pinned = 0;
+        nl.pinsReady = false;
+
+#if defined(ENGINE_KING_DANGER)
+        // Candidate #7: enemy attack map computed with our king removed from
+        // occupancy, so a king move along a slider ray is scored correctly.
+        {
+            const Bitboard occNoKing = nl.occ ^ square_bb(nl.kingSq);
+            Bitboard danger = 0;
+            if (them == WHITE) {
+                danger |= shift<NORTH_WEST>(nl.enemyPawns) | shift<NORTH_EAST>(nl.enemyPawns);
+            } else {
+                danger |= shift<SOUTH_WEST>(nl.enemyPawns) | shift<SOUTH_EAST>(nl.enemyPawns);
+            }
+            Bitboard b = nl.enemyKnights;
+            while (b) danger |= Attacks::knight_attacks(pop_lsb(b));
+            if (nl.enemyKing) danger |= Attacks::king_attacks(lsb(nl.enemyKing));
+            b = nl.enemyBishops | nl.enemyQueens;
+            while (b) danger |= Attacks::bishop_attacks(pop_lsb(b), occNoKing);
+            b = nl.enemyRooks | nl.enemyQueens;
+            while (b) danger |= Attacks::rook_attacks(pop_lsb(b), occNoKing);
+            nl.kingDanger = danger;
+        }
+#endif
+        return nl;
+    }
+
+    void ensure_pins(const NodeLegality& nl) {
+        const Position& pos = *nl.pos;
+        Bitboard pinned = 0;
         Bitboard snipers =
             (Attacks::rook_attacks(nl.kingSq, 0) & (nl.enemyRooks | nl.enemyQueens)) |
             (Attacks::bishop_attacks(nl.kingSq, 0) & (nl.enemyBishops | nl.enemyQueens));
-        const Bitboard ours = pos.pieces(us);
+        const Bitboard ours = pos.pieces(nl.us);
         while (snipers) {
             const Square sniper = pop_lsb(snipers);
             const Bitboard between = Attacks::between_bb(nl.kingSq, sniper) & nl.occ;
             if (between && !(between & (between - 1)) && (between & ours)) {
-                nl.pinned |= between;
+                pinned |= between;
             }
         }
-        return nl;
+        nl.pinned = pinned;
+        nl.pinsReady = true;
     }
 
     bool is_move_legal_full(const NodeLegality& nl, Move m) {

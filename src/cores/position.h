@@ -59,6 +59,12 @@ namespace Core {
         int fullmove_number() const { return fullmoveNumber; }
         uint64_t hash() const { return zobristHash; }
 
+        // The Zobrist key the position would have after playing m, computed
+        // without mutating the board. Lets the search prefetch the child's
+        // transposition-table bucket before make_move, so the memory fetch
+        // overlaps the board update. Must equal hash() after make_move(m).
+        uint64_t key_after(Move m) const;
+
         // Incremental white-minus-black scores. Material and piece-square
         // bonuses are tracked separately so NNUE blending can use the
         // positional part without double-counting material.

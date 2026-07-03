@@ -353,6 +353,61 @@ namespace Core {
         ASSERT_CONSISTENCY(*this);
     }
 
+    uint64_t Position::key_after(Move m) const {
+        const Square from = m.from_sq();
+        const Square to = m.to_sq();
+        const Color us = sideToMove;
+        const Color them = ~us;
+        const PieceType movingPiece = board[from];
+
+        uint64_t k = zobristHash;
+        int newCastling = castlingRights;
+
+        if (m.is_capture()) {
+            Square capSq = to;
+            PieceType captured;
+            if (m.is_en_passant()) {
+                capSq = make_square((GenFile)file_of(to), (GenRank)rank_of(from));
+                captured = PAWN;
+            } else {
+                captured = board[to];
+            }
+            k ^= Zobrist::psq[them][captured][capSq];
+            newCastling &= CastlingSpoilers[to];
+        }
+
+        // Moving piece leaves `from` and lands on `to`; a promotion changes
+        // which piece lands (the intermediate pawn-on-`to` term cancels out).
+        k ^= Zobrist::psq[us][movingPiece][from];
+        k ^= Zobrist::psq[us][m.is_promotion() ? m.promotion_type() : movingPiece][to];
+
+        if (m.is_castling()) {
+            Square rFrom, rTo;
+            if (to > from) {
+                rFrom = make_square(FILE_H, (GenRank)rank_of(from));
+                rTo   = make_square(FILE_F, (GenRank)rank_of(from));
+            } else {
+                rFrom = make_square(FILE_A, (GenRank)rank_of(from));
+                rTo   = make_square(FILE_D, (GenRank)rank_of(from));
+            }
+            k ^= Zobrist::psq[us][ROOK][rFrom];
+            k ^= Zobrist::psq[us][ROOK][rTo];
+        }
+
+        newCastling &= CastlingSpoilers[from];
+        k ^= Zobrist::castling[castlingRights];
+        k ^= Zobrist::castling[newCastling];
+
+        if (epSquare != SQ_NONE) k ^= Zobrist::enpassant[file_of(epSquare)];
+        if (m.is_double_push()) {
+            const Square epCand = (us == WHITE) ? (Square)(from + 8) : (Square)(from - 8);
+            k ^= Zobrist::enpassant[file_of(epCand)];
+        }
+
+        k ^= Zobrist::side;
+        return k;
+    }
+
     void Position::unmake_move(Move m, const UndoInfo& ui) {
         gamePly--;
         sideToMove = ~sideToMove;
