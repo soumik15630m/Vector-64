@@ -6,10 +6,15 @@ on:
 
 jobs:
   build-and-test:
+    name: ${{ matrix.os }} ${{ matrix.cxx }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - { os: ubuntu-latest,  cc: gcc,   cxx: g++ }
+          - { os: ubuntu-latest,  cc: clang, cxx: clang++ }
+          - { os: macos-latest }
+          - { os: windows-latest }
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -21,35 +26,40 @@ jobs:
         with:
           python-version: '3.x'
 
-      # ---------- Linux ----------
-      - name: Configure (Linux)
-        if: runner.os == 'Linux'
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      # ---------- Unix (Linux + macOS) ----------
+      - name: Configure (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          EXTRA=""
+          if [ -n "${{ matrix.cxx }}" ]; then EXTRA="-DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}"; fi
+          # Apple Silicon's clang rejects -march=native; use a portable build there.
+          if [ "${{ runner.os }}" = "macOS" ]; then EXTRA="$EXTRA -DENGINE_NATIVE=OFF"; fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release $EXTRA
 
-      - name: Build (Linux)
-        if: runner.os == 'Linux'
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
         run: cmake --build build -j
 
-      - name: Perft suite (Linux)
-        if: runner.os == 'Linux'
+      - name: Perft (Unix)
+        if: runner.os != 'Windows'
         working-directory: build
         run: ./bin/ChessEngine --perft
 
-      - name: State/movegen/NNUE consistency (Linux)
-        if: runner.os == 'Linux'
+      - name: Consistency test (Unix)
+        if: runner.os != 'Windows'
         working-directory: build
         run: ./bin/test_zobrist
 
-      - name: Bench regression (Linux)
-        if: runner.os == 'Linux'
+      - name: Bench (Unix)
+        if: runner.os != 'Windows'
         working-directory: build
         run: printf "bench 8\nquit\n" | ./bin/ChessEngine
 
-      - name: UCI smoke test (Linux)
-        if: runner.os == 'Linux'
+      - name: UCI smoke (Unix)
+        if: runner.os != 'Windows'
         run: python tests/uci_smoke.py build/bin/ChessEngine
 
-      # ---------- Windows ----------
+      # ---------- Windows (MSVC) ----------
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         run: cmake -S . -B build
@@ -58,25 +68,44 @@ jobs:
         if: runner.os == 'Windows'
         run: cmake --build build --config Release
 
-      - name: Perft suite (Windows)
+      - name: Perft (Windows)
         if: runner.os == 'Windows'
         working-directory: build
         shell: pwsh
         run: .\bin\Release\ChessEngine.exe --perft
 
-      - name: State/movegen/NNUE consistency (Windows)
+      - name: Consistency test (Windows)
         if: runner.os == 'Windows'
         working-directory: build
         shell: pwsh
         run: .\bin\Release\test_zobrist.exe
 
-      - name: Bench regression (Windows)
+      - name: Bench (Windows)
         if: runner.os == 'Windows'
         working-directory: build
         shell: pwsh
         run: '"bench 8`nquit" | .\bin\Release\ChessEngine.exe'
 
-      - name: UCI smoke test (Windows)
+      - name: UCI smoke (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: python tests/uci_smoke.py build/bin/Release/ChessEngine.exe
+
+  sanitizers:
+    name: linux asan+ubsan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (ASan + UBSan, Debug, no LTO)
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug -DENGINE_LTO=OFF -DENGINE_NATIVE=OFF
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
+      - name: Build
+        run: cmake --build build -j
+      - name: Consistency test under sanitizers
+        working-directory: build
+        run: ./bin/test_zobrist
+      - name: Bench under sanitizers
+        working-directory: build
+        run: printf "setoption name Threads value 1\nbench 8\nquit\n" | ./bin/ChessEngine

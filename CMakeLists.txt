@@ -24,10 +24,17 @@ endif()
 # run `bench 12`, then reconfigure with -DENGINE_PGO=use and rebuild.
 set(ENGINE_PGO "off" CACHE STRING "PGO mode: off | generate | use")
 
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+# LTO/IPO is on by default but can be disabled (e.g. for sanitizer builds).
+option(ENGINE_LTO "Enable link-time / interprocedural optimization" ON)
+if(ENGINE_LTO)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
+
 if(MSVC)
     add_compile_options(/O2 /W4 /Ot /Ob2 /arch:AVX2)
-    add_link_options(/LTCG)
+    if(ENGINE_LTO)
+        add_link_options(/LTCG)
+    endif()
 else()
     add_compile_options(-O3 -Wall -Wextra)
     if(ENGINE_NATIVE)

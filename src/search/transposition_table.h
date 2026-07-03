@@ -11,7 +11,14 @@
 #include <intrin.h>
 #endif
 #if defined(_WIN32)
+// windows.h defines min/max macros that break std::min/std::max/std::clamp
+// used across the search; NOMINMAX and LEAN_AND_MEAN keep it from leaking in.
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 
