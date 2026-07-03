@@ -61,7 +61,7 @@ jobs:
 
       - name: UCI smoke (Unix)
         if: runner.os != 'Windows'
-        run: python tests/uci_smoke.py build/bin/ChessEngine
+        run: python tests/python/uci_smoke.py build/bin/ChessEngine
 
       # ---------- Windows (MSVC) ----------
       - name: Configure (Windows)
@@ -98,7 +98,7 @@ jobs:
       - name: UCI smoke (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: python tests/uci_smoke.py build/bin/Release/ChessEngine.exe
+        run: python tests/python/uci_smoke.py build/bin/Release/ChessEngine.exe
 
   sanitizers:
     name: linux asan+ubsan

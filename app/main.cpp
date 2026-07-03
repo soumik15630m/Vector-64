@@ -5,8 +5,8 @@
 #include <vector>
 #include <charconv>
 #include <cstdint>
-#include "tests/perfts.h"
-#include "src/uci/uci.h"
+#include "perfts.h"
+#include "uci/uci.h"
 
 namespace {
     std::string resolve_epd_path(const std::string& explicitPath, const char* argv0) {

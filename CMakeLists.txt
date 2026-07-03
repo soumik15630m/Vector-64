@@ -85,19 +85,19 @@ set(CORE_HEADERS
 
 add_library(chess_core STATIC ${CORE_SOURCES} ${CORE_HEADERS})
 target_include_directories(chess_core PUBLIC src)
-add_executable(ChessEngine
-        main.cpp
-        tests/perfts.cpp
-        tests/perfts.h
-        src/uci/uci.h
-)
 
+add_executable(ChessEngine
+        app/main.cpp
+        tests/cpp/perfts.cpp
+        tests/cpp/perfts.h
+)
+target_include_directories(ChessEngine PRIVATE tests/cpp)
 target_link_libraries(ChessEngine chess_core)
 set_target_properties(ChessEngine PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
-add_executable(test_zobrist tests/test_zobrist.cpp)
+add_executable(test_zobrist tests/cpp/test_zobrist.cpp)
 target_link_libraries(test_zobrist chess_core)
 set_target_properties(test_zobrist PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

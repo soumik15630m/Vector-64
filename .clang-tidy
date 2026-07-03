@@ -1,0 +1,15 @@
+# Static analysis for the C++ engine. A focused, low-noise set — run locally
+# with: clang-tidy -p build <file>. Not enforced in CI yet.
+Checks: >
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-using,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result
+WarningsAsErrors: ''
+HeaderFilterRegex: '^src/.*'
+FormatStyle: file

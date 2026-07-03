@@ -1,3 +1,11 @@
-# Shell scripts must keep LF line endings so they run on Linux/macOS/ARM hosts
-# regardless of the cloner's core.autocrlf setting.
+# Normalize line endings: store text as LF in the repo, check out native.
+# Shell scripts stay LF everywhere so they run on POSIX hosts.
+* text=auto eol=lf
 *.sh text eol=lf
+*.ps1 text eol=crlf
+
+# Binary assets — never diffed or line-ending converted.
+*.nnue binary
+*.npz binary
+*.pt binary
+*.bin binary

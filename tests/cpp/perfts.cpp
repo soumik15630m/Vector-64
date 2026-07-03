@@ -1,8 +1,8 @@
 #include "perfts.h"
-#include "../src/cores/position.h"
-#include "../src/cores/movegen.h"
-#include "../src/cores/attacks.h"
-#include "../src/cores/zobrist.h"
+#include "cores/position.h"
+#include "cores/movegen.h"
+#include "cores/attacks.h"
+#include "cores/zobrist.h"
 #include <iostream>
 #include <iomanip>
 #include <vector>
