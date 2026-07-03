@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <regex>
+#include <cstdio>
 
 // Include SIMD intrinsics if supported
 #if defined(__AVX2__)
@@ -39,7 +40,7 @@ namespace NNUE {
             }
         }
 
-        int16_t clamp_sym_i16(int value) {
+        [[maybe_unused]] int16_t clamp_sym_i16(int value) {
             return static_cast<int16_t>(std::clamp(value, -32767, 32767));
         }
 
@@ -68,15 +69,6 @@ namespace NNUE {
             }
         }
 
-        void apply_delta(std::array<int16_t, HIDDEN_SIZE>& target, uint32_t featureIndex, int sign) {
-            // Fallback deterministic transform for standalone accumulator updates.
-            for (int i = 0; i < HIDDEN_SIZE; ++i) {
-                const uint32_t mix = featureIndex * 2654435761u + static_cast<uint32_t>(i * 40503u);
-                const int delta = static_cast<int>((mix >> 28) & 0xF) - 8;
-                const int updated = static_cast<int>(target[static_cast<size_t>(i)]) + sign * delta;
-                target[static_cast<size_t>(i)] = clamp_sym_i16(updated);
-            }
-        }
     }
 
     void Accumulator512::clear() {
@@ -100,99 +92,6 @@ namespace NNUE {
         const uint32_t side = perspective == Core::BLACK ? 1u : 0u;
 
         return (((king * HALF_KP_PIECE_BUCKETS + piece) * 64u + sq) * 2u) + side;
-    }
-
-    IncrementalAccumulator::IncrementalAccumulator() {
-        clear();
-    }
-
-    void IncrementalAccumulator::clear() {
-        accum_.clear();
-    }
-
-    void IncrementalAccumulator::add_feature(uint32_t featureIndex, Core::Color perspective) {
-        if (featureIndex >= HALF_KP_TOTAL_FEATURES) return;
-        if (perspective == Core::WHITE) apply_delta(accum_.white, featureIndex, +1);
-        else apply_delta(accum_.black, featureIndex, +1);
-    }
-
-    void IncrementalAccumulator::sub_feature(uint32_t featureIndex, Core::Color perspective) {
-        if (featureIndex >= HALF_KP_TOTAL_FEATURES) return;
-        if (perspective == Core::WHITE) apply_delta(accum_.white, featureIndex, -1);
-        else apply_delta(accum_.black, featureIndex, -1);
-    }
-
-    void IncrementalAccumulator::full_rebuild(const Core::Position& pos) {
-        clear();
-
-        const Core::Bitboard whiteKing = pos.pieces(Core::KING, Core::WHITE);
-        const Core::Bitboard blackKing = pos.pieces(Core::KING, Core::BLACK);
-        if (whiteKing == 0 || blackKing == 0) return;
-
-        const Core::Square whiteKingSq = Core::lsb(whiteKing);
-        const Core::Square blackKingSq = Core::lsb(blackKing);
-
-        for (int c = Core::WHITE; c <= Core::BLACK; ++c) {
-            const Core::Color color = static_cast<Core::Color>(c);
-            for (int pt = Core::PAWN; pt <= Core::QUEEN; ++pt) {
-                Core::Bitboard bb = pos.pieces(static_cast<Core::PieceType>(pt), color);
-                while (bb) {
-                    const Core::Square sq = Core::pop_lsb(bb);
-                    const uint32_t wIdx = halfkp_feature_index(
-                        whiteKingSq, static_cast<Core::PieceType>(pt), color, sq, Core::WHITE
-                    );
-                    const uint32_t bIdx = halfkp_feature_index(
-                        blackKingSq, static_cast<Core::PieceType>(pt), color, sq, Core::BLACK
-                    );
-                    add_feature(wIdx, Core::WHITE);
-                    add_feature(bIdx, Core::BLACK);
-                }
-            }
-        }
-    }
-
-    void IncrementalAccumulator::apply_piece_move(
-        Core::Square kingSquare,
-        Core::PieceType pieceType,
-        Core::Color pieceColor,
-        Core::Square from,
-        Core::Square to,
-        Core::Color perspective
-    ) {
-        const uint32_t fromIdx = halfkp_feature_index(kingSquare, pieceType, pieceColor, from, perspective);
-        const uint32_t toIdx = halfkp_feature_index(kingSquare, pieceType, pieceColor, to, perspective);
-        sub_feature(fromIdx, perspective);
-        add_feature(toIdx, perspective);
-    }
-
-    void IncrementalAccumulator::apply_capture(
-        Core::Square kingSquare,
-        Core::PieceType capturedType,
-        Core::Color capturedColor,
-        Core::Square capturedSquare,
-        Core::Color perspective
-    ) {
-        const uint32_t capturedIdx = halfkp_feature_index(
-            kingSquare, capturedType, capturedColor, capturedSquare, perspective
-        );
-        sub_feature(capturedIdx, perspective);
-    }
-
-    void IncrementalAccumulator::apply_promotion(
-        Core::Square kingSquare,
-        Core::Color pieceColor,
-        Core::Square square,
-        Core::PieceType promotedType,
-        Core::Color perspective
-    ) {
-        const uint32_t pawnIdx = halfkp_feature_index(kingSquare, Core::PAWN, pieceColor, square, perspective);
-        const uint32_t promoIdx = halfkp_feature_index(kingSquare, promotedType, pieceColor, square, perspective);
-        sub_feature(pawnIdx, perspective);
-        add_feature(promoIdx, perspective);
-    }
-
-    void IncrementalAccumulator::on_king_move_rebuild(const Core::Position& pos) {
-        full_rebuild(pos);
     }
 
     bool Runtime::read_exact(std::ifstream& in, void* dst, size_t bytes) {
@@ -396,68 +295,168 @@ namespace NNUE {
         }
     }
 
+    namespace {
+        // Exact integer dot product of a non-negative int8 activation vector
+        // with an int8 weight row. The scalar and AVX2 forms are numerically
+        // identical: products of int8 by [0,127] fit int16, and pairwise
+        // sums of two such products fit int16 without saturation.
+        int32_t dot_i8(const int8_t* RESTRICT act, const int8_t* RESTRICT w, int n) {
+#if defined(__AVX2__)
+            __m256i acc = _mm256_setzero_si256();
+            const __m256i ones = _mm256_set1_epi16(1);
+            int i = 0;
+            for (; i + 32 <= n; i += 32) {
+                const __m256i a = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(act + i));
+                const __m256i b = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(w + i));
+                const __m256i prod = _mm256_maddubs_epi16(a, b);   // 16x int16
+                acc = _mm256_add_epi32(acc, _mm256_madd_epi16(prod, ones));
+            }
+            __m128i lo = _mm256_castsi256_si128(acc);
+            __m128i hi = _mm256_extracti128_si256(acc, 1);
+            __m128i sum128 = _mm_add_epi32(lo, hi);
+            sum128 = _mm_add_epi32(sum128, _mm_shuffle_epi32(sum128, _MM_SHUFFLE(2, 3, 0, 1)));
+            sum128 = _mm_add_epi32(sum128, _mm_shuffle_epi32(sum128, _MM_SHUFFLE(1, 0, 3, 2)));
+            int32_t sum = _mm_cvtsi128_si32(sum128);
+            for (; i < n; ++i) sum += static_cast<int32_t>(w[i]) * static_cast<int32_t>(act[i]);
+            return sum;
+#else
+            int32_t sum = 0;
+            for (int i = 0; i < n; ++i) sum += static_cast<int32_t>(w[i]) * static_cast<int32_t>(act[i]);
+            return sum;
+#endif
+        }
+
+        // Feature-transform activation: relu(clamp((us-them)/64)). Because relu
+        // zeroes every negative result, arithmetic shift (floor) and C division
+        // (truncation) agree on the surviving values, so this is bit-exact with
+        // the scalar reference.
+        void transform_x0(const int16_t* RESTRICT us, const int16_t* RESTRICT them, int8_t* RESTRICT x0, int n) {
+#if defined(__AVX2__)
+            const __m256i zero = _mm256_setzero_si256();
+            const __m256i maxv = _mm256_set1_epi16(127);
+            int i = 0;
+            for (; i + 16 <= n; i += 16) {
+                __m256i u = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(us + i));
+                __m256i t = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(them + i));
+                // Saturating sub: differences beyond int16 range divide down to
+                // >=127 or <=0 and clamp identically to the int32 scalar path.
+                __m256i c = _mm256_subs_epi16(u, t);
+                c = _mm256_srai_epi16(c, 6);                 // /64 for the non-negative survivors
+                c = _mm256_min_epi16(_mm256_max_epi16(c, zero), maxv);
+                // pack 16x int16 [0,127] -> 16x int8 (lanes need reordering)
+                __m256i packed = _mm256_packs_epi16(c, c);
+                packed = _mm256_permute4x64_epi64(packed, _MM_SHUFFLE(3, 1, 2, 0));
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(x0 + i), _mm256_castsi256_si128(packed));
+            }
+            for (; i < n; ++i) {
+                const int centered = static_cast<int>(us[i]) - static_cast<int>(them[i]);
+                x0[i] = relu_i8(clamp_sym_i8(centered / FEATURE_TO_DENSE_SCALE));
+            }
+#else
+            for (int i = 0; i < n; ++i) {
+                const int centered = static_cast<int>(us[i]) - static_cast<int>(them[i]);
+                x0[i] = relu_i8(clamp_sym_i8(centered / FEATURE_TO_DENSE_SCALE));
+            }
+#endif
+        }
+    }
+
     int Runtime::infer_side_to_move(const Accumulator512& accum, Core::Color stm) const {
         const auto& us = stm == Core::WHITE ? accum.white : accum.black;
         const auto& them = stm == Core::WHITE ? accum.black : accum.white;
 
-        std::array<int8_t, HIDDEN_SIZE> x0{};
-        std::array<int8_t, DENSE_L1_SIZE> x1{};
-        std::array<int8_t, DENSE_L2_SIZE> x2{};
+        alignas(32) std::array<int8_t, HIDDEN_SIZE> x0{};
+        alignas(32) std::array<int8_t, DENSE_L1_SIZE> x1{};
+        alignas(32) std::array<int8_t, DENSE_L2_SIZE> x2{};
 
-    #if defined(__AVX2__)
-        for (int i = 0; i < HIDDEN_SIZE; i += 32) {
-            __m256i us_0 = _mm256_load_si256(reinterpret_cast<const __m256i*>(&us[i]));
-            __m256i us_1 = _mm256_load_si256(reinterpret_cast<const __m256i*>(&us[i + 16]));
-            __m256i them_0 = _mm256_load_si256(reinterpret_cast<const __m256i*>(&them[i]));
-            __m256i them_1 = _mm256_load_si256(reinterpret_cast<const __m256i*>(&them[i + 16]));
-
-            __m256i diff_0 = _mm256_sub_epi16(us_0, them_0);
-            __m256i diff_1 = _mm256_sub_epi16(us_1, them_1);
-
-            diff_0 = _mm256_srai_epi16(diff_0, 6);
-            diff_1 = _mm256_srai_epi16(diff_1, 6);
-        }
-
-        for (int i = 0; i < HIDDEN_SIZE; ++i) {
-            const int centered = static_cast<int>(us[i]) - static_cast<int>(them[i]);
-            const int8_t clipped = clamp_sym_i8(centered / FEATURE_TO_DENSE_SCALE);
-            x0[i] = relu_i8(clipped);
-        }
-    #else
-        for (int i = 0; i < HIDDEN_SIZE; ++i) {
-            const int centered = static_cast<int>(us[i]) - static_cast<int>(them[i]);
-            const int8_t clipped = clamp_sym_i8(centered / FEATURE_TO_DENSE_SCALE);
-            x0[i] = relu_i8(clipped);
-        }
-    #endif
+        transform_x0(us.data(), them.data(), x0.data(), HIDDEN_SIZE);
 
         for (int out = 0; out < DENSE_L1_SIZE; ++out) {
-            int32_t sum = network_.l1Bias[static_cast<size_t>(out)];
             const size_t row = static_cast<size_t>(out) * static_cast<size_t>(HIDDEN_SIZE);
-            for (int i = 0; i < HIDDEN_SIZE; ++i) {
-                sum += static_cast<int32_t>(network_.l1Weights[row + static_cast<size_t>(i)]) *
-                    static_cast<int32_t>(x0[static_cast<size_t>(i)]);
-            }
+            int32_t sum = network_.l1Bias[static_cast<size_t>(out)] +
+                dot_i8(x0.data(), network_.l1Weights.data() + row, HIDDEN_SIZE);
             x1[static_cast<size_t>(out)] = relu_i8(clamp_sym_i8(sum / DENSE_TO_DENSE_SCALE));
         }
 
         for (int out = 0; out < DENSE_L2_SIZE; ++out) {
-            int32_t sum = network_.l2Bias[static_cast<size_t>(out)];
             const size_t row = static_cast<size_t>(out) * static_cast<size_t>(DENSE_L1_SIZE);
-            for (int i = 0; i < DENSE_L1_SIZE; ++i) {
-                sum += static_cast<int32_t>(network_.l2Weights[row + static_cast<size_t>(i)]) *
-                    static_cast<int32_t>(x1[static_cast<size_t>(i)]);
-            }
+            int32_t sum = network_.l2Bias[static_cast<size_t>(out)] +
+                dot_i8(x1.data(), network_.l2Weights.data() + row, DENSE_L1_SIZE);
             x2[static_cast<size_t>(out)] = relu_i8(clamp_sym_i8(sum / DENSE_TO_DENSE_SCALE));
         }
 
-        int32_t out = network_.outBias;
-        for (int i = 0; i < DENSE_L2_SIZE; ++i) {
-            out += static_cast<int32_t>(network_.outWeights[static_cast<size_t>(i)]) *
-                static_cast<int32_t>(x2[static_cast<size_t>(i)]);
-        }
+        int32_t out = network_.outBias +
+            dot_i8(x2.data(), network_.outWeights.data(), DENSE_L2_SIZE);
 
         return static_cast<int>(out / OUTPUT_SCALE);
+    }
+
+    bool Runtime::self_test_quantized_inference() {
+        // Pure-scalar reference, independent of the vectorized helpers above.
+        auto infer_scalar = [](const Network& net, const Accumulator512& accum, Core::Color stm) -> int {
+            const auto& us = stm == Core::WHITE ? accum.white : accum.black;
+            const auto& them = stm == Core::WHITE ? accum.black : accum.white;
+
+            std::array<int8_t, HIDDEN_SIZE> x0{};
+            std::array<int8_t, DENSE_L1_SIZE> x1{};
+            std::array<int8_t, DENSE_L2_SIZE> x2{};
+
+            for (int i = 0; i < HIDDEN_SIZE; ++i) {
+                const int centered = static_cast<int>(us[i]) - static_cast<int>(them[i]);
+                x0[i] = relu_i8(clamp_sym_i8(centered / FEATURE_TO_DENSE_SCALE));
+            }
+            for (int o = 0; o < DENSE_L1_SIZE; ++o) {
+                int32_t sum = net.l1Bias[o];
+                for (int i = 0; i < HIDDEN_SIZE; ++i)
+                    sum += static_cast<int32_t>(net.l1Weights[o * HIDDEN_SIZE + i]) * x0[i];
+                x1[o] = relu_i8(clamp_sym_i8(sum / DENSE_TO_DENSE_SCALE));
+            }
+            for (int o = 0; o < DENSE_L2_SIZE; ++o) {
+                int32_t sum = net.l2Bias[o];
+                for (int i = 0; i < DENSE_L1_SIZE; ++i)
+                    sum += static_cast<int32_t>(net.l2Weights[o * DENSE_L1_SIZE + i]) * x1[i];
+                x2[o] = relu_i8(clamp_sym_i8(sum / DENSE_TO_DENSE_SCALE));
+            }
+            int32_t out = net.outBias;
+            for (int i = 0; i < DENSE_L2_SIZE; ++i)
+                out += static_cast<int32_t>(net.outWeights[i]) * x2[i];
+            return static_cast<int>(out / OUTPUT_SCALE);
+        };
+
+        // Deterministic pseudo-random network + accumulators (xorshift).
+        uint64_t s = 0x9E3779B97F4A7C15ULL;
+        auto next = [&s]() { s ^= s << 13; s ^= s >> 7; s ^= s << 17; return s; };
+        auto rndW = [&](int lo, int hi) {
+            return static_cast<int>(lo + static_cast<int>(next() % static_cast<uint64_t>(hi - lo + 1)));
+        };
+
+        Runtime rt;
+        rt.network_.featureTransformWeights.clear();
+        for (int trial = 0; trial < 64; ++trial) {
+            for (auto& w : rt.network_.l1Weights) w = static_cast<int8_t>(rndW(-127, 127));
+            for (auto& w : rt.network_.l2Weights) w = static_cast<int8_t>(rndW(-127, 127));
+            for (auto& w : rt.network_.outWeights) w = static_cast<int8_t>(rndW(-127, 127));
+            for (auto& b : rt.network_.l1Bias) b = rndW(-4000, 4000);
+            for (auto& b : rt.network_.l2Bias) b = rndW(-4000, 4000);
+            rt.network_.outBias = rndW(-20000, 20000);
+
+            Accumulator512 accum{};
+            for (int i = 0; i < HIDDEN_SIZE; ++i) {
+                accum.white[i] = static_cast<int16_t>(rndW(-20000, 20000));
+                accum.black[i] = static_cast<int16_t>(rndW(-20000, 20000));
+            }
+
+            for (Core::Color stm : {Core::WHITE, Core::BLACK}) {
+                const int a = rt.infer_side_to_move(accum, stm);
+                const int b = infer_scalar(rt.network_, accum, stm);
+                if (a != b) {
+                    std::fprintf(stderr, "[nnue self-test] trial %d stm %d: simd %d scalar %d\n",
+                                 trial, static_cast<int>(stm), a, b);
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     int Runtime::infer_side_to_move_scaled(const Core::Position& pos, Core::Color perspective) const {

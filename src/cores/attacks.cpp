@@ -14,7 +14,8 @@ namespace Attacks {
     Bitboard Between[64][64];
     Bitboard Line[64][64];
 
-    constexpr int MAX_ATTACK_TABLE_SIZE = 0x400000;
+    // Exact totals for plain magic tables: rooks 102400 + bishops 5248 entries.
+    constexpr int MAX_ATTACK_TABLE_SIZE = 102400 + 5248;
     Bitboard AttackTable[MAX_ATTACK_TABLE_SIZE];
 
     Magic RookMagics[64];
@@ -100,6 +101,22 @@ namespace Attacks {
                 attacks[i] = compute_sliding_attack((Square)s, occupancy, is_bishop);
             }
 
+#if ATTACKS_USE_PEXT
+            // pext(occupancies[i], mask) == i by construction (the loop above
+            // scatters the bits of i into mask positions in lsb order, which
+            // is exactly the order PEXT gathers them), so no magic search.
+            magics[s].magic = 0;
+            magics[s].shift = 0;
+            magics[s].attacks = attack_table_ptr;
+            if (attack_table_ptr + variation_count > AttackTable + MAX_ATTACK_TABLE_SIZE) {
+                std::cerr << "CRITICAL ERROR: Attack Table Buffer Overflow!" << std::endl;
+                exit(1);
+            }
+            for (int i = 0; i < variation_count; ++i) attack_table_ptr[i] = attacks[i];
+            attack_table_ptr += variation_count;
+            continue;
+#endif
+
             bool found = false;
             for (int k = 0; k < 1000000; ++k) {
                 
@@ -111,7 +128,7 @@ namespace Attacks {
                 magics[s].shift = shift;
                 magics[s].attacks = attack_table_ptr;
 
-                if (attack_table_ptr + variation_count >= AttackTable + MAX_ATTACK_TABLE_SIZE) {
+                if (attack_table_ptr + variation_count > AttackTable + MAX_ATTACK_TABLE_SIZE) {
                     std::cerr << "CRITICAL ERROR: Magic Table Buffer Overflow!" << std::endl;
                     exit(1);
                 }

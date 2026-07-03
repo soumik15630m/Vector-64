@@ -1,30 +1,61 @@
-# build dirs
+# ---- build directories ----
 /build/
+/build-*/
 /cmake-build-*/
-
-# cmake artifacts
+/out/
 /CMakeFiles/
-/CMakeCache.txt
-/cmake_install.cmake
-/Makefile
-/compile_commands.json
+CMakeCache.txt
+cmake_install.cmake
+CMakeUserPresets.json
+compile_commands.json
+Makefile
 
-# binaries and libs
-*.exe
-*.dll
-*.so
-*.dylib
+# ---- compiled objects / binaries / libs ----
+*.o
+*.obj
 *.a
 *.lib
-*.obj
-*.o
+*.so
+*.dll
+*.dylib
+*.exe
 *.pdb
+*.ilk
+*.exp
 
-# ide/editor
+# ---- profile-guided optimization artifacts ----
+*.gcda
+*.gcno
+*.gcov
+gmon.out
+
+# ---- python ----
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# ---- training data, checkpoints, networks (loaded at runtime, never tracked) ----
+/artifacts/
+/tools/data/
+*.nnue
+*.npz
+*.pt
+*.ckpt
+*.meta.json
+
+# ---- editors / IDEs ----
 /.idea/
 /.vscode/
+*.swp
 
-# logs/temp
+# ---- OS cruft ----
+.DS_Store
+Thumbs.db
+
+# ---- logs / temp ----
 *.log
 *.tmp
 *.cache

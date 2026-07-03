@@ -1,0 +1,10 @@
+--index-url https://download.pytorch.org/whl/cu121
+--extra-index-url https://pypi.org/simple
+
+# Upper bounds keep the cu121 index and the quantized export behaviour
+# reproducible; bump deliberately, not implicitly.
+torch>=2.2,<2.6
+numpy>=1.23,<3
+tqdm>=4.60,<5
+zstandard>=0.22,<0.24
+datasets>=2.19,<3

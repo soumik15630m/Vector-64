@@ -38,7 +38,8 @@ namespace Search {
             killers_[ply][0] = Core::Move::none();
             killers_[ply][1] = Core::Move::none();
         }
-        std::fill(&history_[0][0][0], &history_[0][0][0] + Core::COLOR_NB * Core::SQUARE_NB * Core::SQUARE_NB, 0);
+        std::fill(&history_[0][0][0],
+                  &history_[0][0][0] + static_cast<int>(Core::COLOR_NB) * 64 * 64, 0);
     }
 
     void MoveOrdering::age_history() {
@@ -65,6 +66,13 @@ namespace Search {
         score = std::min(32767, score + bonus);
     }
 
+    void MoveOrdering::update_history_malus(Core::Color side, Core::Move move, int depth) {
+        if (move.is_capture()) return;
+        const int malus = depth * depth;
+        int& score = history_[side][move.from_sq()][move.to_sq()];
+        score = std::max(-32767, score - malus);
+    }
+
     int MoveOrdering::score_move(const Core::Position& pos, Core::Move move, Core::Move ttMove, int ply) const {
         if (ttMove.is_ok() && move == ttMove) return TT_MOVE_SCORE;
         if (move.is_capture()) return CAPTURE_BASE_SCORE + mvv_lva(pos, move);
@@ -79,7 +87,7 @@ namespace Search {
     }
 
     void MoveOrdering::sort_moves(const Core::Position& pos, Core::MoveList& moves, Core::Move ttMove, int ply) const {
-        int scores[Core::MoveList::MAX_MOVES] = {0};
+        int scores[Core::MoveList::MAX_MOVES];
         for (int i = 0; i < moves.size(); ++i) {
             scores[i] = score_move(pos, moves.moves[i], ttMove, ply);
         }

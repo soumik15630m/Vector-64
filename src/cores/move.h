@@ -36,7 +36,6 @@ namespace Core {
         }
 
         static Move none() { return Move(0); }
-        static Move null() { return Move(65); }
 
         constexpr Square from_sq() const {
             return static_cast<Square>(data & 0x3F);

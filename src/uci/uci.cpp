@@ -37,6 +37,7 @@ namespace UCI {
             int bincMs = 0;
             int movesToGo = 0;
             uint64_t nodes = 0;
+            std::vector<std::string> searchMoves;
         };
 
         std::string to_lower(std::string s) {
@@ -108,6 +109,14 @@ namespace UCI {
             return !m.is_promotion();
         }
 
+        bool looks_like_move(const std::string& token) {
+            return token.size() >= 4 && token.size() <= 5 &&
+                   token[0] >= 'a' && token[0] <= 'h' &&
+                   token[1] >= '1' && token[1] <= '8' &&
+                   token[2] >= 'a' && token[2] <= 'h' &&
+                   token[3] >= '1' && token[3] <= '8';
+        }
+
         bool parse_int(const std::string& token, int& out) {
             try {
                 size_t consumed = 0;
@@ -139,6 +148,7 @@ namespace UCI {
                 threads_ = static_cast<int>(hc);
                 position_.setFromFEN(STANDARD_STARTPOS_FEN);
                 search_.set_hash_mb(static_cast<size_t>(hashMb_));
+                search_.set_threads(threads_);
             }
 
             ~EngineUci() {
@@ -188,16 +198,21 @@ namespace UCI {
                     emit("info string evaluation score: " + std::to_string(score) + " cp");
                     return true;
                 }
+                if (cmd == "bench") {
+                    handle_bench(tokens);
+                    return true;
+                }
                 if (cmd == "go") {
                     handle_go(tokens);
                     return true;
                 }
                 if (cmd == "stop") {
-                    stopRequested_.store(true, std::memory_order_relaxed);
+                    // Join so bestmove is guaranteed out before the next command.
+                    stop_and_join(false);
                     return true;
                 }
                 if (cmd == "ponderhit") {
-                    stopRequested_.store(false, std::memory_order_relaxed);
+                    // Ponder is not advertised; ignore gracefully.
                     return true;
                 }
                 if (cmd == "quit") {
@@ -213,7 +228,6 @@ namespace UCI {
                 emit("option name Threads type spin default " + std::to_string(threads_) + " min 1 max 64");
                 emit("option name Hash type spin default " + std::to_string(hashMb_) + " min 1 max 4096");
                 emit("option name Move Overhead type spin default " + std::to_string(moveOverheadMs_) + " min 0 max 500");
-                emit("option name Ponder type check default " + std::string(ponder_ ? "true" : "false"));
                 emit("option name EvalFile type string default <empty>");
                 emit("uciok");
             }
@@ -221,7 +235,10 @@ namespace UCI {
             void handle_setoption(const std::string& line) {
                 const std::string lower = to_lower(line);
                 const size_t namePos = lower.find("name ");
-                if (namePos == std::string::npos) return;
+                if (namePos == std::string::npos) {
+                    emit("info string setoption: missing name");
+                    return;
+                }
                 const size_t valuePos = lower.find(" value ");
 
                 std::string name;
@@ -238,28 +255,35 @@ namespace UCI {
 
                 if (name == "threads") {
                     int parsed = threads_;
-                    if (!parse_int(value, parsed)) return;
+                    if (!parse_int(value, parsed)) {
+                        emit("info string setoption Threads: invalid value '" + value + "'");
+                        return;
+                    }
                     threads_ = std::clamp(parsed, 1, 64);
+                    stop_and_join(true);
+                    search_.set_threads(threads_);
                     return;
                 }
 
                 if (name == "hash") {
                     int parsed = hashMb_;
-                    if (!parse_int(value, parsed)) return;
+                    if (!parse_int(value, parsed)) {
+                        emit("info string setoption Hash: invalid value '" + value + "'");
+                        return;
+                    }
                     hashMb_ = std::clamp(parsed, 1, 4096);
+                    stop_and_join(true);
                     search_.set_hash_mb(static_cast<size_t>(hashMb_));
                     return;
                 }
 
                 if (name == "move overhead") {
                     int parsed = moveOverheadMs_;
-                    if (!parse_int(value, parsed)) return;
+                    if (!parse_int(value, parsed)) {
+                        emit("info string setoption Move Overhead: invalid value '" + value + "'");
+                        return;
+                    }
                     moveOverheadMs_ = std::clamp(parsed, 0, 500);
-                    return;
-                }
-
-                if (name == "ponder") {
-                    ponder_ = to_lower(value) == "true";
                     return;
                 }
 
@@ -280,7 +304,10 @@ namespace UCI {
                     } else {
                         emit("info string EvalFile load failed: " + path);
                     }
+                    return;
                 }
+
+                emit("info string unknown option: " + name);
             }
 
             void handle_position(const std::vector<std::string>& tokens) {
@@ -304,6 +331,10 @@ namespace UCI {
                     }
                     if (parts < 4 || !next.setFromFEN(fen)) {
                         emit("info string invalid fen in position command");
+                        return;
+                    }
+                    if (next.opponent_in_check()) {
+                        emit("info string illegal fen: side not to move is in check");
                         return;
                     }
                 } else {
@@ -348,6 +379,12 @@ namespace UCI {
 
                     if (key == "ponder") params.ponder = true;
                     else if (key == "infinite") params.infinite = true;
+                    else if (key == "searchmoves") {
+                        while (i + 1 < tokens.size() && looks_like_move(tokens[i + 1])) {
+                            params.searchMoves.push_back(tokens[i + 1]);
+                            ++i;
+                        }
+                    }
                     else if (key == "depth" && i + 1 < tokens.size() && parse_int(tokens[i + 1], parsed)) {
                         params.depth = std::max(1, parsed);
                         ++i;
@@ -378,6 +415,53 @@ namespace UCI {
                 start_search(params);
             }
 
+            // Fixed-depth searches over a small position set; reports total
+            // nodes and NPS so perf changes are measurable and comparable.
+            void handle_bench(const std::vector<std::string>& tokens) {
+                stop_and_join(true);
+
+                int depth = 10;
+                if (tokens.size() > 1) {
+                    int parsed = 0;
+                    if (parse_int(tokens[1], parsed)) depth = std::clamp(parsed, 1, MAX_DEPTH);
+                }
+
+                static const char* BENCH_FENS[] = {
+                    STANDARD_STARTPOS_FEN,
+                    "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+                    "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+                    "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+                    "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+                    "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10",
+                    "r1bq1rk1/pp2bppp/2n2n2/2pp4/4P3/2NP1N2/PPP1BPPP/R1BQ1RK1 w - - 0 8",
+                    "8/8/1p1k4/p1p2p2/P1P2P2/1P1K4/8/8 w - - 0 1",
+                };
+
+                search_.clear();
+                uint64_t totalNodes = 0;
+                const auto start = Clock::now();
+
+                for (const char* fen : BENCH_FENS) {
+                    Core::Position pos;
+                    if (!pos.setFromFEN(fen)) continue;
+
+                    Search::Limits limits;
+                    limits.maxDepth = depth;
+
+                    Search::Callbacks callbacks;
+                    const Search::Result result = search_.search(pos, limits, callbacks);
+                    totalNodes += result.nodes;
+                }
+
+                const auto elapsed = std::chrono::duration_cast<Ms>(Clock::now() - start).count();
+                const uint64_t nps = elapsed > 0 ? (totalNodes * 1000ULL) / static_cast<uint64_t>(elapsed) : 0ULL;
+
+                emit("info string bench depth " + std::to_string(depth) +
+                     " nodes " + std::to_string(totalNodes) +
+                     " time " + std::to_string(elapsed) + "ms" +
+                     " nps " + std::to_string(nps));
+            }
+
             void start_search(const GoParams& params) {
                 std::lock_guard<std::mutex> lock(searchMu_);
 
@@ -401,19 +485,36 @@ namespace UCI {
                 stopRequested_.store(false, std::memory_order_relaxed);
             }
 
-            void emit_info(int depth, int scoreCp, const Core::Move& pvMove, uint64_t nodes, int elapsedMs, double qsearchTtHitRate, double negamaxTtHitRate) {
-                const uint64_t nps = elapsedMs > 0 ? (nodes * 1000ULL) / static_cast<uint64_t>(elapsedMs) : 0ULL;
+            void emit_info(const Search::IterInfo& info) {
+                const uint64_t nps = info.elapsedMs > 0
+                    ? (info.nodes * 1000ULL) / static_cast<uint64_t>(info.elapsedMs)
+                    : 0ULL;
 
                 std::ostringstream os;
-                os << "info depth " << depth
-                   << " score cp " << scoreCp
-                   << " nodes " << nodes
+                os << "info depth " << info.depth
+                   << " seldepth " << info.seldepth;
+
+                if (Search::is_mate_score(info.scoreCp)) {
+                    os << " score mate " << Search::mate_in_moves(info.scoreCp);
+                } else {
+                    os << " score cp " << info.scoreCp;
+                }
+
+                os << " nodes " << info.nodes
                    << " nps " << nps
-                   << " time " << elapsedMs
-                   << " pv " << move_to_uci(pvMove)
-                   << " QSearch TT hit rate: " << qsearchTtHitRate << "%"
-                   << " Negamax TT hit rate: " << negamaxTtHitRate << "%";
+                   << " time " << info.elapsedMs
+                   << " pv";
+                for (int i = 0; i < info.pvLen; ++i) {
+                    os << ' ' << move_to_uci(info.pv[i]);
+                }
                 emit(os.str());
+
+                if (statsInfo_) {
+                    std::ostringstream stats;
+                    stats << "info string tt hit rate qsearch " << info.qsearchTtHitRate
+                          << "% negamax " << info.negamaxTtHitRate << "%";
+                    emit(stats.str());
+                }
             }
 
             void emit_bestmove(uint64_t searchId, Core::Move bestMove) {
@@ -434,20 +535,32 @@ namespace UCI {
                     maximumTimeMs = std::max(1, params.movetimeMs - moveOverheadMs_);
                     optimumTimeMs = maximumTimeMs;
                 } else if (!params.infinite && !params.ponder) {
-                    const int remain = root.side_to_move() == Core::WHITE ? params.wtimeMs : params.btimeMs;
-                    const int inc = root.side_to_move() == Core::WHITE ? params.wincMs : params.bincMs;
+                    const bool whiteToMove = root.side_to_move() == Core::WHITE;
+                    const int clockMs = whiteToMove ? params.wtimeMs : params.btimeMs;
+                    const bool hasClock = clockMs >= 0;
 
-                    if (remain > 0) {
+                    if (hasClock) {
+                        const long long remain = std::max(0, clockMs);
+                        const long long inc = std::max(0, whiteToMove ? params.wincMs : params.bincMs);
+                        const long long overhead = moveOverheadMs_;
+
+                        // The increment arrives after we move, so the hard
+                        // ceiling is the clock itself minus overhead. Even a
+                        // zero clock keeps a 1ms deadline: never search unbounded.
+                        const long long hardBudget = std::max(1LL, remain - overhead);
                         const int mtg = params.movesToGo > 0 ? params.movesToGo : 40;
 
-                        // Base allocation: 1/40th of time + partial increment
-                        optimumTimeMs = remain / mtg + (inc * 3) / 4 - moveOverheadMs_;
-                        // Hard cutoff to prevent flagging: 20% of remaining time
-                        maximumTimeMs = remain / 5 - moveOverheadMs_;
+                        long long optimum = remain / mtg + (inc * 3) / 4 - overhead;
+                        long long maximum = (params.movesToGo == 1)
+                            // Last move before a new time control: the clock refills.
+                            ? hardBudget
+                            : remain / 5 + (inc * 3) / 4 - overhead;
 
-                        optimumTimeMs = std::max(1, optimumTimeMs);
-                        maximumTimeMs = std::clamp(maximumTimeMs, 1, std::max(1, remain - moveOverheadMs_));
-                        optimumTimeMs = std::min(optimumTimeMs, maximumTimeMs);
+                        maximum = std::clamp(maximum, 1LL, hardBudget);
+                        optimum = std::clamp(optimum, 1LL, maximum);
+
+                        optimumTimeMs = static_cast<int>(optimum);
+                        maximumTimeMs = static_cast<int>(maximum);
                     }
                 }
 
@@ -459,6 +572,19 @@ namespace UCI {
                 if (maximumTimeMs > 0) {
                     searchLimits.hasDeadline = true;
                     searchLimits.deadline = Clock::now() + Ms(maximumTimeMs);
+                }
+
+                if (!params.searchMoves.empty()) {
+                    Core::MoveList legal;
+                    Core::generate_legal_moves(root, legal);
+                    for (const std::string& uci : params.searchMoves) {
+                        for (int k = 0; k < legal.size(); ++k) {
+                            if (move_matches_uci(legal[k], uci)) {
+                                searchLimits.searchMoves.push_back(legal[k]);
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 std::atomic<bool> softStop{false};
@@ -476,24 +602,25 @@ namespace UCI {
                 };
 
                 callbacks.onInfo = [this, searchId, &softStop, &previousScore, &firstIteration, &currentOptimumMs, maximumTimeMs](
-                    int depth, int scoreCp, Core::Move pvMove, uint64_t nodes, int elapsedMs, double qsearchTtHitRate, double negamaxTtHitRate) {
+                    const Search::IterInfo& info) {
 
                     if (searchId != activeSearchId_.load(std::memory_order_relaxed)) return;
-                    emit_info(depth, scoreCp, pvMove, nodes, elapsedMs, qsearchTtHitRate, negamaxTtHitRate);
+                    emit_info(info);
 
-                    if (!firstIteration && currentOptimumMs > 0) {
+                    if (!firstIteration && currentOptimumMs > 0 &&
+                        !Search::is_mate_score(info.scoreCp) && !Search::is_mate_score(previousScore)) {
                         // If the evaluation drops by more than 30 cp, extend the optimum time
                         // to ensure we aren't walking into a tactical blunder due to the horizon effect.
-                        if (scoreCp < previousScore - 30) {
+                        if (info.scoreCp < previousScore - 30) {
                             currentOptimumMs = std::min(maximumTimeMs, static_cast<int>(currentOptimumMs * 1.5));
                         }
                     }
 
-                    previousScore = scoreCp;
+                    previousScore = info.scoreCp;
                     firstIteration = false;
 
                     // If we finished a depth and exceeded our allowed soft-limit time, trigger a stop
-                    if (currentOptimumMs > 0 && elapsedMs >= currentOptimumMs) {
+                    if (currentOptimumMs > 0 && info.elapsedMs >= currentOptimumMs) {
                         softStop.store(true, std::memory_order_relaxed);
                     }
                 };
@@ -518,10 +645,12 @@ namespace UCI {
             std::thread searchThread_;
 
             int threads_ = 1;
-            int hashMb_ = 6;
+            // Default sized to sit inside the shared L3 cache alongside the
+            // working set; raise via the Hash option for long time controls.
+            int hashMb_ = 8;
             int moveOverheadMs_ = 30;
-            bool ponder_ = false;
-            Search::EngineSearch search_{6};
+            bool statsInfo_ = false;
+            Search::EngineSearch search_{8};
         };
     }
 

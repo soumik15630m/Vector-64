@@ -3,6 +3,20 @@
 
 #include <cstdint>
 
+// Portable hot-path hints. RESTRICT promises non-aliasing (used only where
+// that is provably true); HOT_FN nudges hot-cold code layout. Both degrade
+// to nothing on compilers that lack them.
+#if defined(__GNUC__) || defined(__clang__)
+    #define RESTRICT __restrict__
+    #define HOT_FN [[gnu::hot]]
+#elif defined(_MSC_VER)
+    #define RESTRICT __restrict
+    #define HOT_FN
+#else
+    #define RESTRICT
+    #define HOT_FN
+#endif
+
 namespace Core {
 
     using Bitboard = uint64_t;
@@ -57,6 +71,9 @@ namespace Core {
         RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8,
         RANK_NB
     };
+
+    // Centipawn piece values, indexed by PieceType (king = 0).
+    constexpr int PieceValue[PIECE_TYPE_NB] = {0, 100, 320, 330, 500, 900, 0};
 
     constexpr inline Color operator~(Color c) {
         return static_cast<Color>(c ^ 1);

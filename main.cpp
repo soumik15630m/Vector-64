@@ -6,7 +6,6 @@
 #include <charconv>
 #include <cstdint>
 #include "tests/perfts.h"
-#include "tests/nnue_consistency.h"
 #include "src/uci/uci.h"
 
 namespace {
@@ -46,54 +45,9 @@ namespace {
         return "";
     }
 
-    bool parse_positive_int(const std::string& token, int& out) {
-        int value = 0;
-        const char* begin = token.data();
-        const char* end = token.data() + token.size();
-        const auto [ptr, ec] = std::from_chars(begin, end, value);
-        if (ec != std::errc() || ptr != end || value <= 0) return false;
-        out = value;
-        return true;
-    }
-
-    bool parse_u64(const std::string& token, uint64_t& out) {
-        uint64_t value = 0;
-        const char* begin = token.data();
-        const char* end = token.data() + token.size();
-        const auto [ptr, ec] = std::from_chars(begin, end, value);
-        if (ec != std::errc() || ptr != end) return false;
-        out = value;
-        return true;
-    }
 }
 
 int main(int argc, char** argv) {
-    if (argc > 1 && std::string(argv[1]) == "--nnue-consistency") {
-        int games = 32;
-        int maxPlies = 80;
-        uint64_t seed = 0xC0FFEEULL;
-
-        if (argc > 2 && !parse_positive_int(argv[2], games)) {
-            std::cerr << "[ERROR] Invalid games value for --nnue-consistency.\n";
-            return 1;
-        }
-        if (argc > 3 && !parse_positive_int(argv[3], maxPlies)) {
-            std::cerr << "[ERROR] Invalid max-plies value for --nnue-consistency.\n";
-            return 1;
-        }
-        if (argc > 4 && !parse_u64(argv[4], seed)) {
-            std::cerr << "[ERROR] Invalid seed value for --nnue-consistency.\n";
-            return 1;
-        }
-        if (argc > 5) {
-            std::cerr
-                << "[ERROR] Usage: --nnue-consistency [games] [max-plies] [seed]\n";
-            return 1;
-        }
-
-        return run_nnue_incremental_consistency_test(games, maxPlies, seed);
-    }
-
     if (argc > 1 && std::string(argv[1]) == "--perft") {
         const std::string requested = argc > 2 ? std::string(argv[2]) : "";
         const std::string epdPath = resolve_epd_path(requested, argv[0]);

@@ -9,6 +9,7 @@ import time
 
 class UciSession:
     def __init__(self, engine_path: str):
+        engine_path = os.path.abspath(engine_path)
         if not os.path.exists(engine_path):
             raise FileNotFoundError(f"engine not found: {engine_path}")
         self.proc = subprocess.Popen(

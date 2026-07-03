@@ -33,13 +33,62 @@ namespace Core {
         SpoilersInitialized = true;
     }
 
+    // Piece-square bonus tables, indexed [color][type][square]. The running
+    // white-minus-black totals let evaluate() reduce to a sign flip.
+    int PsqTable[COLOR_NB][PIECE_TYPE_NB][SQUARE_NB];
+    bool PsqInitialized = false;
+
+    namespace {
+        int psq_center_bonus(Square sq) {
+            const int file = file_of(sq);
+            const int rank = rank_of(sq);
+            const int dist = std::abs(file - 3) + std::abs(rank - 3);
+            return 14 - 3 * dist;
+        }
+
+        int psq_bonus(PieceType pt, Square sq, Color c) {
+            const int file = file_of(sq);
+            const int rank = rank_of(sq);
+            const int relRank = c == WHITE ? rank : (7 - rank);
+            const int center = psq_center_bonus(sq);
+
+            switch (pt) {
+                case PAWN:   return relRank * 6 - std::abs(file - 3) * 2;
+                case KNIGHT: return center;
+                case BISHOP: return center / 2;
+                case ROOK:   return relRank * 3;
+                case QUEEN:  return center / 3;
+                case KING:   return -(center / 2);
+                default:     return 0;
+            }
+        }
+    }
+
+    void init_psq_tables() {
+        if (PsqInitialized) return;
+        for (int c = WHITE; c <= BLACK; ++c) {
+            for (int pt = NO_PIECE_TYPE; pt < PIECE_TYPE_NB; ++pt) {
+                for (int s = 0; s < SQUARE_NB; ++s) {
+                    const PieceType type = static_cast<PieceType>(pt);
+                    const Square sq = static_cast<Square>(s);
+                    PsqTable[c][pt][s] = (pt == NO_PIECE_TYPE)
+                        ? 0
+                        : psq_bonus(type, sq, static_cast<Color>(c));
+                }
+            }
+        }
+        PsqInitialized = true;
+    }
+
     Position::Position() {
 
         init_spoilers();
+        init_psq_tables();
 
         std::memset(byColor, 0, sizeof(byColor));
         std::memset(byType, 0, sizeof(byType));
         std::memset(history, 0, sizeof(history));
+        std::fill(std::begin(board), std::end(board), NO_PIECE_TYPE);
 
         sideToMove = WHITE;
         castlingRights = 0;
@@ -47,6 +96,8 @@ namespace Core {
         halfmoveClock = 0;
         fullmoveNumber = 1;
         zobristHash = 0;
+        materialWb = 0;
+        psqtWb = 0;
         gamePly = 0;
     }
 
@@ -55,63 +106,45 @@ namespace Core {
         Bitboard bb = square_bb(s);
         byColor[c] |= bb;
         byType[pt] |= bb;
+        board[s] = pt;
+        const int sign = (c == WHITE) ? 1 : -1;
+        materialWb += sign * PieceValue[pt];
+        psqtWb += sign * PsqTable[c][pt][s];
         zobristHash ^= Zobrist::psq[c][pt][s];
     }
 
-    void Position::remove_piece(Square s) {
-        if (!has_bit(occupancy(), s)) return;
-
-        Bitboard bb = square_bb(s);
-        Color c = (byColor[WHITE] & bb) ? WHITE : BLACK;
-
-        PieceType pt = NO_PIECE_TYPE;
-        for (int t = PAWN; t <= KING; ++t) {
-            if (byType[t] & bb) {
-                pt = static_cast<PieceType>(t);
-                break;
-            }
-        }
-
+    void Position::remove_piece(Color c, Square s) {
+        const PieceType pt = board[s];
         if (pt == NO_PIECE_TYPE) return;
 
+        Bitboard bb = square_bb(s);
         byColor[c] ^= bb;
         byType[pt] ^= bb;
+        board[s] = NO_PIECE_TYPE;
+        const int sign = (c == WHITE) ? 1 : -1;
+        materialWb -= sign * PieceValue[pt];
+        psqtWb -= sign * PsqTable[c][pt][s];
         zobristHash ^= Zobrist::psq[c][pt][s];
     }
 
-    void Position::move_piece(Square from, Square to) {
-        if (!has_bit(occupancy(), from)) return;
+    void Position::move_piece(Color c, Square from, Square to) {
+        const PieceType pt = board[from];
+        if (pt == NO_PIECE_TYPE) return;
 
         Bitboard from_bb = square_bb(from);
         Bitboard to_bb = square_bb(to);
         Bitboard mask = from_bb | to_bb;
 
-        Color c = (byColor[WHITE] & from_bb) ? WHITE : BLACK;
-
-        PieceType pt = NO_PIECE_TYPE;
-        for (int t = PAWN; t <= KING; ++t) {
-            if (byType[t] & from_bb) {
-                pt = static_cast<PieceType>(t);
-                byType[t] ^= mask;
-                break;
-            }
-        }
-
-        if (pt == NO_PIECE_TYPE) return;
-
+        byType[pt] ^= mask;
         byColor[c] ^= mask;
+        board[from] = NO_PIECE_TYPE;
+        board[to] = pt;
+
+        const int delta = PsqTable[c][pt][to] - PsqTable[c][pt][from];
+        psqtWb += (c == WHITE) ? delta : -delta;
 
         zobristHash ^= Zobrist::psq[c][pt][from];
         zobristHash ^= Zobrist::psq[c][pt][to];
-    }
-
-    PieceType Position::piece_on(Square s) const {
-        Bitboard bb = square_bb(s);
-        if (!has_bit(occupancy(), s)) return NO_PIECE_TYPE;
-        for (int t = PAWN; t <= KING; ++t) {
-            if (byType[t] & bb) return static_cast<PieceType>(t);
-        }
-        return NO_PIECE_TYPE;
     }
 
     Color Position::color_on(Square s) const {
@@ -124,17 +157,20 @@ namespace Core {
     bool Position::setFromFEN(std::string_view fen) {
         std::memset(byColor, 0, sizeof(byColor));
         std::memset(byType, 0, sizeof(byType));
+        std::fill(std::begin(board), std::end(board), NO_PIECE_TYPE);
         zobristHash = 0;
+        materialWb = 0;
+        psqtWb = 0;
         gamePly = 0;
 
         std::stringstream ss(std::string{fen});
-        std::string board, side, castle, ep, half, full;
+        std::string board_str, side, castle, ep, half, full;
 
-        ss >> board >> side >> castle >> ep >> half >> full;
+        ss >> board_str >> side >> castle >> ep >> half >> full;
 
         int rank = 7;
         int file = 0;
-        for (char c : board) {
+        for (char c : board_str) {
             if (c == '/') {
                 rank--;
                 file = 0;
@@ -250,7 +286,7 @@ namespace Core {
 
         Square from = m.from_sq();
         Square to = m.to_sq();
-        PieceType movingPiece = piece_on(from);
+        PieceType movingPiece = board[from];
 
         ui.capturedPiece = NO_PIECE_TYPE;
         ui.castlingRights = castlingRights;
@@ -266,23 +302,17 @@ namespace Core {
             Square capSq = to;
             if (m.is_en_passant()) {
                 capSq = make_square((GenFile)file_of(to), (GenRank)rank_of(from));
-                ui.capturedPiece = PAWN;
-            } else {
-                ui.capturedPiece = piece_on(to);
             }
-            remove_piece(capSq);
+            ui.capturedPiece = board[capSq];
+            remove_piece(~sideToMove, capSq);
             castlingRights &= CastlingSpoilers[to];
         }
 
-        move_piece(from, to);
+        move_piece(sideToMove, from, to);
 
         if (m.is_promotion()) {
-            PieceType promoType = m.promotion_type();
-            Bitboard to_bb = square_bb(to);
-            byType[PAWN] ^= to_bb;
-            byType[promoType] |= to_bb;
-            zobristHash ^= Zobrist::psq[sideToMove][PAWN][to];
-            zobristHash ^= Zobrist::psq[sideToMove][promoType][to];
+            remove_piece(sideToMove, to);
+            put_piece(m.promotion_type(), sideToMove, to);
         }
 
         if (m.is_castling()) {
@@ -294,7 +324,7 @@ namespace Core {
                 rFrom = make_square(FILE_A, (GenRank)rank_of(from));
                 rTo = make_square(FILE_D, (GenRank)rank_of(from));
             }
-            move_piece(rFrom, rTo);
+            move_piece(sideToMove, rFrom, rTo);
         }
 
         castlingRights &= CastlingSpoilers[from];
@@ -328,31 +358,17 @@ namespace Core {
         sideToMove = ~sideToMove;
         if (sideToMove == BLACK) fullmoveNumber--;
 
-        zobristHash = ui.savedHash;
-        epSquare = ui.epSquare;
-        castlingRights = ui.castlingRights;
-        halfmoveClock = ui.halfmoveClock;
-
         Square from = m.from_sq();
         Square to = m.to_sq();
 
+        // Restore pieces through the shared helpers so the mailbox and the
+        // incremental psq score stay consistent; the hash they touch is
+        // overwritten by the saved value below.
         if (m.is_promotion()) {
-            PieceType promoType = m.promotion_type();
-            Bitboard to_bb = square_bb(to);
-            Bitboard from_bb = square_bb(from);
-            byType[promoType] ^= to_bb;
-            byColor[sideToMove] ^= to_bb;
-            byType[PAWN] |= from_bb;
-            byColor[sideToMove] |= from_bb;
+            remove_piece(sideToMove, to);
+            put_piece(PAWN, sideToMove, from);
         } else {
-            PieceType movedPiece = piece_on(to);
-            if (movedPiece != NO_PIECE_TYPE) {
-                Bitboard to_bb = square_bb(to);
-                Bitboard from_bb = square_bb(from);
-                Bitboard mask = to_bb | from_bb;
-                byColor[sideToMove] ^= mask;
-                byType[movedPiece] ^= mask;
-            }
+            move_piece(sideToMove, to, from);
         }
 
         if (m.is_castling()) {
@@ -364,24 +380,21 @@ namespace Core {
                 rFrom = make_square(FILE_A, (GenRank)rank_of(from));
                 rTo = make_square(FILE_D, (GenRank)rank_of(from));
             }
-            Bitboard rTo_bb = square_bb(rTo);
-            Bitboard rFrom_bb = square_bb(rFrom);
-            Bitboard mask = rTo_bb | rFrom_bb;
-            byColor[sideToMove] ^= mask;
-            byType[ROOK] ^= mask;
+            move_piece(sideToMove, rTo, rFrom);
         }
 
-        if (m.is_capture()) {
-            if (ui.capturedPiece != NO_PIECE_TYPE) {
-                Square capSq = to;
-                if (m.is_en_passant()) {
-                    capSq = make_square((GenFile)file_of(to), (GenRank)rank_of(from));
-                }
-                Bitboard cap_bb = square_bb(capSq);
-                byColor[~sideToMove] |= cap_bb;
-                byType[ui.capturedPiece] |= cap_bb;
+        if (m.is_capture() && ui.capturedPiece != NO_PIECE_TYPE) {
+            Square capSq = to;
+            if (m.is_en_passant()) {
+                capSq = make_square((GenFile)file_of(to), (GenRank)rank_of(from));
             }
+            put_piece(ui.capturedPiece, ~sideToMove, capSq);
         }
+
+        zobristHash = ui.savedHash;
+        epSquare = ui.epSquare;
+        castlingRights = ui.castlingRights;
+        halfmoveClock = ui.halfmoveClock;
         ASSERT_CONSISTENCY(*this);
     }
 
@@ -412,16 +425,15 @@ namespace Core {
         ASSERT_CONSISTENCY(*this);
     }
 
-    bool Position::is_repetition(int ) const {
-        int start = std::max(0, gamePly - halfmoveClock);
-        int count = 0;
+    bool Position::is_repetition() const {
+        // A repetition needs at least four reversible plies since the last
+        // capture or pawn move; skip the history walk entirely below that.
+        if (halfmoveClock < 4) return false;
+        const int start = std::max(0, gamePly - halfmoveClock);
         for (int i = gamePly - 2; i >= start; i -= 2) {
-            if (history[i] == zobristHash) {
-                count++;
-                if (count >= 1) return true;
-            }
+            if (history[i] == zobristHash) return true;
         }
-        return count >= 2;
+        return false;
     }
 
     Bitboard Position::attackers_to(Square s, Bitboard occupied) const {
@@ -452,6 +464,12 @@ namespace Core {
         return is_square_attacked(kSq, ~sideToMove);
     }
 
+    bool Position::opponent_in_check() const {
+        Bitboard k = pieces(KING, ~sideToMove);
+        if (k == 0) return true;  // no enemy king == not a legal position
+        return is_square_attacked(lsb(k), sideToMove);
+    }
+
     bool Position::is_ok() const {
         if (byColor[WHITE] & byColor[BLACK]) return false;
         if (popcount(byType[KING] & byColor[WHITE]) != 1) return false;
@@ -461,6 +479,15 @@ namespace Core {
                 if (rank_of(epSquare) != RANK_6) return false;
             } else {
                 if (rank_of(epSquare) != RANK_3) return false;
+            }
+        }
+        for (int s = 0; s < SQUARE_NB; ++s) {
+            const Bitboard bb = square_bb(static_cast<Square>(s));
+            const PieceType pt = board[s];
+            if (pt == NO_PIECE_TYPE) {
+                if (occupancy() & bb) return false;
+            } else if (!(byType[pt] & bb)) {
+                return false;
             }
         }
         return true;

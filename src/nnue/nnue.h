@@ -42,49 +42,6 @@ namespace NNUE {
         Core::Color perspective
     );
 
-    class IncrementalAccumulator {
-    public:
-        IncrementalAccumulator();
-
-        void clear();
-        void full_rebuild(const Core::Position& pos);
-
-        void apply_piece_move(
-            Core::Square kingSquare,
-            Core::PieceType pieceType,
-            Core::Color pieceColor,
-            Core::Square from,
-            Core::Square to,
-            Core::Color perspective
-        );
-
-        void apply_capture(
-            Core::Square kingSquare,
-            Core::PieceType capturedType,
-            Core::Color capturedColor,
-            Core::Square capturedSquare,
-            Core::Color perspective
-        );
-
-        void apply_promotion(
-            Core::Square kingSquare,
-            Core::Color pieceColor,
-            Core::Square square,
-            Core::PieceType promotedType,
-            Core::Color perspective
-        );
-
-        void on_king_move_rebuild(const Core::Position& pos);
-
-        const Accumulator512& data() const { return accum_; }
-
-    private:
-        void add_feature(uint32_t featureIndex, Core::Color perspective);
-        void sub_feature(uint32_t featureIndex, Core::Color perspective);
-
-        Accumulator512 accum_{};
-    };
-
     class Runtime {
     public:
         bool load_file(const std::string& path);
@@ -93,6 +50,11 @@ namespace NNUE {
         // Returns a side-to-move centipawn estimate.
         int evaluate(const Core::Position& pos) const;
         int evaluate_perspective(const Core::Position& pos, Core::Color perspective) const;
+
+        // Verifies the (possibly AVX2) quantized inference is bit-exact with a
+        // pure-scalar reference over a deterministic pseudo-random network.
+        // Returns true on match; used by the build's self-test.
+        static bool self_test_quantized_inference();
 
     private:
         struct QuantScales {

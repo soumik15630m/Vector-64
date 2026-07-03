@@ -2,9 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
 
 jobs:
   build-and-test:
@@ -18,6 +16,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # ---------- Linux ----------
       - name: Configure (Linux)
         if: runner.os == 'Linux'
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -26,15 +30,26 @@ jobs:
         if: runner.os == 'Linux'
         run: cmake --build build -j
 
-      - name: Run perft suite (Linux)
+      - name: Perft suite (Linux)
         if: runner.os == 'Linux'
         working-directory: build
         run: ./bin/ChessEngine --perft
 
-      - name: Run UCI smoke test (Linux)
+      - name: State/movegen/NNUE consistency (Linux)
+        if: runner.os == 'Linux'
+        working-directory: build
+        run: ./bin/test_zobrist
+
+      - name: Bench regression (Linux)
+        if: runner.os == 'Linux'
+        working-directory: build
+        run: printf "bench 8\nquit\n" | ./bin/ChessEngine
+
+      - name: UCI smoke test (Linux)
         if: runner.os == 'Linux'
         run: python tests/uci_smoke.py build/bin/ChessEngine
 
+      # ---------- Windows ----------
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         run: cmake -S . -B build
@@ -43,13 +58,25 @@ jobs:
         if: runner.os == 'Windows'
         run: cmake --build build --config Release
 
-      - name: Run perft suite (Windows)
+      - name: Perft suite (Windows)
         if: runner.os == 'Windows'
         working-directory: build
         shell: pwsh
         run: .\bin\Release\ChessEngine.exe --perft
 
-      - name: Run UCI smoke test (Windows)
+      - name: State/movegen/NNUE consistency (Windows)
+        if: runner.os == 'Windows'
+        working-directory: build
+        shell: pwsh
+        run: .\bin\Release\test_zobrist.exe
+
+      - name: Bench regression (Windows)
+        if: runner.os == 'Windows'
+        working-directory: build
+        shell: pwsh
+        run: '"bench 8`nquit" | .\bin\Release\ChessEngine.exe'
+
+      - name: UCI smoke test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: python tests/uci_smoke.py build/bin/Release/ChessEngine.exe

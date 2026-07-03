@@ -16,8 +16,6 @@ namespace Search {
         int evaluate(const Core::Position& pos) const;
 
     private:
-        int psqt_white_minus_black(const Core::Position& pos) const;
-
         NNUE::Runtime nnue_{};
         int nnueWeight_ = 8;
         int psqtWeight_ = 2;
