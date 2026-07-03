@@ -87,6 +87,25 @@ void run_perft_suite() {
     std::cout << "[INFO] Legacy perft suite executed.\n";
 }
 
+int run_perft_one(const std::string& fen, int depth, uint64_t expected) {
+    Core::Attacks::init();
+    Core::Zobrist::init();
+
+    Core::Position pos;
+    if (!pos.setFromFEN(fen)) {
+        std::cerr << "[FAIL] invalid FEN: " << fen << "\n";
+        return 2;
+    }
+    const uint64_t got = perft(pos, depth);
+    if (got == expected) {
+        std::cout << "[PASS] perft depth " << depth << " = " << got << "  (" << fen << ")\n";
+        return 0;
+    }
+    std::cerr << "[FAIL] perft depth " << depth << ": got " << got
+              << ", expected " << expected << "  (" << fen << ")\n";
+    return 1;
+}
+
 int run_epd_test_suite(const std::string& filepath, int max_depth_limit) {
     Core::Attacks::init();
     Core::Zobrist::init();

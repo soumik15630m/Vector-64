@@ -48,6 +48,17 @@ namespace {
 }
 
 int main(int argc, char** argv) {
+    if (argc >= 5 && std::string(argv[1]) == "--perft-one") {
+        // --perft-one "<fen>" <depth> <expected-nodes>
+        try {
+            return run_perft_one(argv[2], std::stoi(argv[3]),
+                                 static_cast<uint64_t>(std::stoull(argv[4])));
+        } catch (...) {
+            std::cerr << "[ERROR] Usage: --perft-one \"<fen>\" <depth> <expected>\n";
+            return 2;
+        }
+    }
+
     if (argc > 1 && std::string(argv[1]) == "--perft") {
         const std::string requested = argc > 2 ? std::string(argv[2]) : "";
         const std::string epdPath = resolve_epd_path(requested, argv[0]);

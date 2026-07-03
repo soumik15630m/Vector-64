@@ -108,15 +108,24 @@ namespace {
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
     Attacks::init();
     Zobrist::init();
 
-    if (!NNUE::Runtime::self_test_quantized_inference()) {
-        std::printf("FAIL: AVX2 quantized NNUE inference differs from scalar reference\n");
-        return 1;
+    // Optional selector so CTest can register each check as its own test:
+    //   test_zobrist [all|nnue|games]   (default: all)
+    const std::string which = argc > 1 ? argv[1] : "all";
+    const bool runNnue = (which == "all" || which == "nnue");
+    const bool runGames = (which == "all" || which == "games");
+
+    if (runNnue) {
+        if (!NNUE::Runtime::self_test_quantized_inference()) {
+            std::printf("FAIL: AVX2 quantized NNUE inference differs from scalar reference\n");
+            return 1;
+        }
+        std::printf("PASS: quantized NNUE inference bit-exact (SIMD == scalar)\n");
     }
-    std::printf("PASS: quantized NNUE inference bit-exact (SIMD == scalar)\n");
+    if (!runGames) return 0;
 
     constexpr int GAMES = 200;
     constexpr int MAX_PLIES = 120;
