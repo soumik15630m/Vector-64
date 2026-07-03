@@ -8,8 +8,6 @@ from __future__ import annotations
 import argparse
 import struct
 from pathlib import Path
-from typing import Dict, Tuple
-
 
 MAGIC = b"VECTOR64_NNUE"
 VERSION = 1
@@ -34,8 +32,8 @@ def align64(offset: int) -> int:
     return (offset + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1)
 
 
-def expected_layout() -> Tuple[Dict[str, Dict[str, int]], int]:
-    sections: Dict[str, Dict[str, int]] = {}
+def expected_layout() -> tuple[dict[str, dict[str, int]], int]:
+    sections: dict[str, dict[str, int]] = {}
     pos = HEADER_SIZE
 
     for name in (

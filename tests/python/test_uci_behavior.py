@@ -41,7 +41,7 @@ class Uci:
         self.proc = subprocess.Popen(
             [path], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1
         )
-        self.lines: "queue.Queue[str]" = queue.Queue()
+        self.lines: queue.Queue[str] = queue.Queue()
         threading.Thread(target=self._reader, daemon=True).start()
 
     def _reader(self) -> None:

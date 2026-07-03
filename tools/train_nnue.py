@@ -80,16 +80,16 @@ import re
 import signal
 import struct
 import time
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import Any
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader, Dataset, IterableDataset
-
 
 WHITE = 0
 BLACK = 1
@@ -180,7 +180,7 @@ def clamp_array(values: torch.Tensor, low: int, high: int) -> torch.Tensor:
 @dataclass
 class FenPosition:
     fen: str
-    board: List[Optional[str]]
+    board: list[str | None]
     stm: int
     white_king: int
     black_king: int
@@ -199,7 +199,7 @@ def parse_fen(fen: str) -> FenPosition:
     if len(ranks) != 8:
         raise ValueError("FEN board must contain exactly 8 ranks")
 
-    board: List[Optional[str]] = [None] * 64
+    board: list[str | None] = [None] * 64
     white_king = -1
     black_king = -1
     white_count = 0
@@ -258,12 +258,12 @@ def piece_type(piece: str) -> int:
     return PIECE_TYPE_BY_CHAR[piece.lower()]
 
 
-def halfkp_features_from_position(pos: FenPosition) -> Tuple[List[int], List[int]]:
+def halfkp_features_from_position(pos: FenPosition) -> tuple[list[int], list[int]]:
     if pos.white_king < 0 or pos.black_king < 0:
         raise ValueError("Both kings must be present")
 
-    white_indices: List[int] = []
-    black_indices: List[int] = []
+    white_indices: list[int] = []
+    black_indices: list[int] = []
 
     for square, piece in enumerate(pos.board):
         if piece is None:
@@ -333,7 +333,7 @@ def is_square_attacked(pos: FenPosition, square: int, attacker: int) -> bool:
                 if file + df == target_file and rank + dr == target_rank:
                     return True
         elif pt in (BISHOP, ROOK, QUEEN):
-            dirs: List[Tuple[int, int]] = []
+            dirs: list[tuple[int, int]] = []
             if pt in (BISHOP, QUEEN):
                 dirs.extend(bishop_dirs)
             if pt in (ROOK, QUEEN):
@@ -368,9 +368,9 @@ def target_from_mate(mate: float) -> float:
     return 1.0 if mate > 0 else -1.0
 
 
-def best_lichess_eval(obj: Dict[str, Any]) -> Tuple[Optional[float], Optional[int], str]:
-    best_cp: Optional[float] = None
-    best_depth: Optional[int] = None
+def best_lichess_eval(obj: dict[str, Any]) -> tuple[float | None, int | None, str]:
+    best_cp: float | None = None
+    best_depth: int | None = None
     saw_depth = False
     saw_mate_only = False
 
@@ -408,9 +408,9 @@ def best_lichess_eval(obj: Dict[str, Any]) -> Tuple[Optional[float], Optional[in
     return None, best_depth, "no_cp"
 
 
-def best_lichess_mate(obj: Dict[str, Any]) -> Optional[float]:
-    best_mate: Optional[float] = None
-    best_depth: Optional[int] = None
+def best_lichess_mate(obj: dict[str, Any]) -> float | None:
+    best_mate: float | None = None
+    best_depth: int | None = None
     for ev in obj.get("evals", []) or []:
         if not isinstance(ev, dict):
             continue
@@ -439,7 +439,7 @@ EPD_SCORE_RE = re.compile(
 EPD_MATE_RE = re.compile(r"(?:^|[\s;])(?:mate|bm)\s+(-?\d+)", re.IGNORECASE)
 
 
-def parse_epd_line(line: str) -> Tuple[str, Optional[float], Optional[float]]:
+def parse_epd_line(line: str) -> tuple[str, float | None, float | None]:
     fields = line.strip().split()
     if len(fields) < 4:
         raise ValueError("EPD line must contain at least four FEN fields")
@@ -451,7 +451,7 @@ def parse_epd_line(line: str) -> Tuple[str, Optional[float], Optional[float]]:
     return fen, cp, mate
 
 
-def parse_training_line(line: str, source_kind: str) -> Optional[Tuple[str, int, List[int], List[int], float]]:
+def parse_training_line(line: str, source_kind: str) -> tuple[str, int, list[int], list[int], float] | None:
     try:
         if source_kind == "jsonl":
             obj = json.loads(line)
@@ -475,6 +475,7 @@ def parse_training_line(line: str, source_kind: str) -> Optional[Tuple[str, int,
         if cp is not None:
             target = target_from_cp(stm_sign * float(cp))
         else:
+            assert mate is not None  # guaranteed: cp and mate are not both None above
             target = target_from_mate(stm_sign * float(mate))
 
         white_indices, black_indices = halfkp_features_from_position(pos)
@@ -491,8 +492,8 @@ class IndexedTextEvalDataset(Dataset):
         source_kind: str,
         split: str,
         val_fraction: float,
-        max_positions: Optional[int],
-        offsets: Optional[List[int]] = None,
+        max_positions: int | None,
+        offsets: list[int] | None = None,
     ) -> None:
         self.path = path
         self.source_kind = source_kind
@@ -505,10 +506,10 @@ class IndexedTextEvalDataset(Dataset):
             self.offsets = [off for i, off in enumerate(all_offsets) if i % val_every == 0]
         else:
             self.offsets = [off for i, off in enumerate(all_offsets) if i % val_every != 0]
-        self._fh: Optional[Any] = None
+        self._fh: Any | None = None
 
-    def _build_offsets(self) -> List[int]:
-        offsets: List[int] = []
+    def _build_offsets(self) -> list[int]:
+        offsets: list[int] = []
         with self.path.open("rb") as fh:
             while True:
                 offset = fh.tell()
@@ -531,7 +532,7 @@ class IndexedTextEvalDataset(Dataset):
     def __len__(self) -> int:
         return len(self.offsets)
 
-    def __getstate__(self) -> Dict[str, Any]:
+    def __getstate__(self) -> dict[str, Any]:
         state = self.__dict__.copy()
         state["_fh"] = None
         return state
@@ -541,7 +542,7 @@ class IndexedTextEvalDataset(Dataset):
             self._fh = self.path.open("rb")
         return self._fh
 
-    def __getitem__(self, index: int) -> Dict[str, Any]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         fh = self._file()
         fh.seek(self.offsets[index])
         line = fh.readline().decode("utf-8", errors="replace")
@@ -561,9 +562,9 @@ def build_seekable_offsets(
     path: Path,
     *,
     source_kind: str,
-    max_positions: Optional[int],
-) -> List[int]:
-    offsets: List[int] = []
+    max_positions: int | None,
+) -> list[int]:
+    offsets: list[int] = []
     with path.open("rb") as fh:
         while True:
             offset = fh.tell()
@@ -591,8 +592,8 @@ class StreamingZstdEvalDataset(IterableDataset):
         *,
         split: str,
         val_fraction: float,
-        max_positions: Optional[int],
-        total_usable: Optional[int] = None,
+        max_positions: int | None,
+        total_usable: int | None = None,
     ) -> None:
         self.path = path
         self.split = split
@@ -607,7 +608,7 @@ class StreamingZstdEvalDataset(IterableDataset):
         val_count = (self.total_usable + val_every - 1) // val_every
         return val_count if self.split == "val" else self.total_usable - val_count
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         try:
             import zstandard as zstd  # type: ignore
         except ImportError as exc:
@@ -638,7 +639,7 @@ class StreamingZstdEvalDataset(IterableDataset):
                         }
 
 
-def count_usable_zstd(path: Path, max_positions: Optional[int]) -> int:
+def count_usable_zstd(path: Path, max_positions: int | None) -> int:
     try:
         import zstandard as zstd  # type: ignore
     except ImportError as exc:
@@ -666,8 +667,8 @@ class NPZShardDataset(IterableDataset):
         *,
         split: str,
         val_fraction: float,
-        max_positions: Optional[int],
-        total_positions: Optional[int] = None,
+        max_positions: int | None,
+        total_positions: int | None = None,
     ) -> None:
         self.files = list(files)
         self.split = split
@@ -691,7 +692,7 @@ class NPZShardDataset(IterableDataset):
         val_count = (total + val_every - 1) // val_every
         return val_count if self.split == "val" else total - val_count
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         val_every = max(2, int(round(1.0 / max(self.val_fraction, 1e-6))))
         global_index = 0
         for path in self.files:
@@ -719,7 +720,7 @@ class NPZShardDataset(IterableDataset):
                     global_index += 1
 
 
-def collate_samples(samples: Sequence[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+def collate_samples(samples: Sequence[dict[str, Any]]) -> dict[str, torch.Tensor]:
     if not samples:
         raise RuntimeError("Empty batch")
 
@@ -801,7 +802,7 @@ class NNUEModel(nn.Module):
         return out_cp
 
 
-def discover_shard_files(path: Path) -> Tuple[List[Path], Optional[int]]:
+def discover_shard_files(path: Path) -> tuple[list[Path], int | None]:
     if path.is_dir():
         manifest = path / "manifest.json"
         total = None
@@ -830,27 +831,27 @@ def discover_shard_files(path: Path) -> Tuple[List[Path], Optional[int]]:
 def build_datasets(
     data_path: Path,
     *,
-    max_positions: Optional[int],
+    max_positions: int | None,
     val_fraction: float,
-) -> Tuple[Iterable[Any], Iterable[Any], int]:
+) -> tuple[Dataset[Any], Dataset[Any], int]:
     shard_files, shard_total = discover_shard_files(data_path)
     if shard_files:
         total = min(shard_total or 0, max_positions) if max_positions and shard_total else shard_total
-        train_ds = NPZShardDataset(
+        shard_train_ds = NPZShardDataset(
             shard_files,
             split="train",
             val_fraction=val_fraction,
             max_positions=max_positions,
             total_positions=total,
         )
-        val_ds = NPZShardDataset(
+        shard_val_ds = NPZShardDataset(
             shard_files,
             split="val",
             val_fraction=val_fraction,
             max_positions=max_positions,
-            total_positions=train_ds.total_positions,
+            total_positions=shard_train_ds.total_positions,
         )
-        return train_ds, val_ds, train_ds.total_positions
+        return shard_train_ds, shard_val_ds, shard_train_ds.total_positions
 
     suffix = data_path.suffix.lower()
     source_kind = "jsonl" if suffix in {".jsonl", ".zst"} else "epd"
@@ -900,7 +901,7 @@ def checkpoint_step(path: Path) -> int:
     return int(match.group(1)) if match else -1
 
 
-def validate_checkpoint_obj(obj: Any, path: Path) -> Dict[str, Any]:
+def validate_checkpoint_obj(obj: Any, path: Path) -> dict[str, Any]:
     if not isinstance(obj, dict):
         raise ValueError(f"{path} is not a checkpoint dictionary")
     missing = CHECKPOINT_REQUIRED_KEYS.difference(obj.keys())
@@ -909,7 +910,7 @@ def validate_checkpoint_obj(obj: Any, path: Path) -> Dict[str, Any]:
     return obj
 
 
-def find_latest_checkpoint(checkpoint_dir: Path) -> Optional[Path]:
+def find_latest_checkpoint(checkpoint_dir: Path) -> Path | None:
     candidates = sorted(checkpoint_dir.glob("nnue_step_*.pt"), key=checkpoint_step)
     for path in reversed(candidates):
         try:
@@ -925,12 +926,12 @@ def save_checkpoint(
     path: Path,
     *,
     model: NNUEModel,
-    optimizer: Optional[torch.optim.Optimizer],
-    scheduler: Optional[Any],
+    optimizer: torch.optim.Optimizer | None,
+    scheduler: Any | None,
     step: int,
     epoch: int,
     best_loss: float,
-    args: Dict[str, Any],
+    args: dict[str, Any],
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -958,15 +959,15 @@ def prune_step_checkpoints(checkpoint_dir: Path, keep: int = 3) -> None:
 
 @dataclass
 class TrainConfig:
-    data: Optional[Path]
+    data: Path | None
     output: Path
     epochs: int = 10
     batch_size: int = 4096
     lr: float = 1e-3
-    max_positions: Optional[int] = None
+    max_positions: int | None = None
     checkpoint_steps: int = 1000
-    resume: Optional[Path] = None
-    export_only: Optional[Path] = None
+    resume: Path | None = None
+    export_only: Path | None = None
     verify: bool = False
     device: str = "cuda"
     checkpoint_dir: Path = Path("checkpoints")
@@ -983,31 +984,31 @@ class TrainResult:
     best_loss: float
     final_val_loss: float
     output_path: Path
-    verification_passed: Optional[bool]
+    verification_passed: bool | None
     total_positions: int
 
 
 class EmergencyCheckpoint:
     def __init__(self, checkpoint_dir: Path) -> None:
         self.checkpoint_dir = checkpoint_dir
-        self.model: Optional[NNUEModel] = None
-        self.optimizer: Optional[torch.optim.Optimizer] = None
-        self.scheduler: Optional[Any] = None
+        self.model: NNUEModel | None = None
+        self.optimizer: torch.optim.Optimizer | None = None
+        self.scheduler: Any | None = None
         self.step = 0
         self.epoch = 0
         self.best_loss = float("inf")
-        self.args: Dict[str, Any] = {}
+        self.args: dict[str, Any] = {}
 
     def update(
         self,
         *,
         model: NNUEModel,
-        optimizer: Optional[torch.optim.Optimizer],
-        scheduler: Optional[Any],
+        optimizer: torch.optim.Optimizer | None,
+        scheduler: Any | None,
         step: int,
         epoch: int,
         best_loss: float,
-        args: Dict[str, Any],
+        args: dict[str, Any],
     ) -> None:
         self.model = model
         self.optimizer = optimizer
@@ -1017,7 +1018,7 @@ class EmergencyCheckpoint:
         self.best_loss = best_loss
         self.args = args
 
-    def save(self, prefix: str = "emergency") -> Optional[Path]:
+    def save(self, prefix: str = "emergency") -> Path | None:
         if self.model is None:
             return None
         path = self.checkpoint_dir / f"{prefix}_step_{self.step}.pt"
@@ -1059,22 +1060,22 @@ def make_loaders(
     data_path: Path,
     *,
     batch_size: int,
-    max_positions: Optional[int],
+    max_positions: int | None,
     val_split: float,
-) -> Tuple[DataLoader, DataLoader, int]:
+) -> tuple[DataLoader, DataLoader, int]:
     train_ds, val_ds, total_positions = build_datasets(
         data_path,
         max_positions=max_positions,
         val_fraction=val_split,
     )
-    train_loader = DataLoader(
+    train_loader: DataLoader[Any] = DataLoader(
         train_ds,
         batch_size=batch_size,
         collate_fn=collate_samples,
         num_workers=0,
         pin_memory=torch.cuda.is_available(),
     )
-    val_loader = DataLoader(
+    val_loader: DataLoader[Any] = DataLoader(
         val_ds,
         batch_size=batch_size,
         collate_fn=collate_samples,
@@ -1089,7 +1090,7 @@ def estimate_batches(total_positions: int, batch_size: int, val_split: float, ep
     return max(1, math.ceil(train_positions / batch_size) * max(1, epochs))
 
 
-def move_batch(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:
+def move_batch(batch: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
     return {k: v.to(device, non_blocking=True) for k, v in batch.items()}
 
 
@@ -1106,14 +1107,14 @@ def train_one_epoch(
     best_loss: float,
     cfg: TrainConfig,
     emergency: EmergencyCheckpoint,
-    args_dict: Dict[str, Any],
-) -> Tuple[int, float]:
+    args_dict: dict[str, Any],
+) -> tuple[int, float]:
     model.train()
     running_loss = 0.0
     batches = 0
     last_log_time = time.time()
     last_log_step = step
-    previous_log_loss: Optional[float] = None
+    previous_log_loss: float | None = None
 
     for batch in loader:
         step += 1
@@ -1202,10 +1203,12 @@ def load_checkpoint_into(
     path: Path,
     *,
     model: NNUEModel,
-    optimizer: Optional[torch.optim.Optimizer] = None,
-    scheduler: Optional[Any] = None,
-    device: torch.device = torch.device("cpu"),
-) -> Tuple[int, int, float]:
+    optimizer: torch.optim.Optimizer | None = None,
+    scheduler: Any | None = None,
+    device: torch.device | None = None,
+) -> tuple[int, int, float]:
+    if device is None:
+        device = torch.device("cpu")
     obj = validate_checkpoint_obj(torch.load(path, map_location=device), path)
     model.load_state_dict(obj["model_state_dict"])
     if optimizer is not None and obj.get("optimizer_state_dict"):
@@ -1230,7 +1233,7 @@ def write_padding(fh: Any) -> None:
         fh.write(b"\x00" * (aligned - current))
 
 
-def export_model_to_nnue(model: NNUEModel, output_path: Path) -> Dict[str, float]:
+def export_model_to_nnue(model: NNUEModel, output_path: Path) -> dict[str, float]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     model_cpu = model.to("cpu").eval()
 
@@ -1241,7 +1244,9 @@ def export_model_to_nnue(model: NNUEModel, output_path: Path) -> Dict[str, float
     l2_w = quantize_tensor(model_cpu.dense2.weight, DENSE_TO_DENSE_SCALE, -127, 127, np.dtype("i1"))
     l2_b = quantize_tensor(model_cpu.dense2.bias, DENSE_TO_DENSE_SCALE, -2_147_483_647, 2_147_483_647, np.dtype("<i4"))
     out_w = quantize_tensor(model_cpu.output.weight.reshape(-1), DENSE_TO_DENSE_SCALE, -127, 127, np.dtype("i1"))
-    out_b = quantize_tensor(model_cpu.output.bias.reshape(-1), DENSE_TO_DENSE_SCALE, -2_147_483_647, 2_147_483_647, np.dtype("<i4"))
+    out_b = quantize_tensor(
+        model_cpu.output.bias.reshape(-1), DENSE_TO_DENSE_SCALE, -2_147_483_647, 2_147_483_647, np.dtype("<i4")
+    )
 
     if ft_w.shape != (HALF_KP_TOTAL_FEATURES, HIDDEN_SIZE):
         raise ValueError(f"featureTransformWeights shape mismatch: {ft_w.shape}")
@@ -1319,7 +1324,7 @@ class LoadedNNUE:
     l1_b: np.ndarray
     l2_b: np.ndarray
     out_b: np.ndarray
-    scales: Dict[str, float]
+    scales: dict[str, float]
 
 
 def assert_zero_padding(blob: bytes, begin: int, end: int) -> None:
@@ -1360,7 +1365,7 @@ def load_nnue_file(path: Path) -> LoadedNNUE:
         meta_path = cwd_candidate if cwd_candidate.exists() else meta_path
     with meta_path.open("r", encoding="utf-8") as fh:
         scales_obj = json.load(fh)
-    scales: Dict[str, float] = {}
+    scales: dict[str, float] = {}
     for key in META_KEYS:
         value = float(scales_obj[key])
         if not math.isfinite(value) or value <= 0.0:
@@ -1482,14 +1487,14 @@ def train_model(cfg: TrainConfig) -> TrainResult:
     }
 
     model = NNUEModel().to(device)
-    optimizer: Optional[torch.optim.Optimizer] = None
-    scheduler: Optional[Any] = None
+    optimizer: torch.optim.Optimizer | None = None
+    scheduler: Any | None = None
     step = 0
     start_epoch = 0
     best_loss = float("inf")
     final_val_loss = float("inf")
     total_positions = 0
-    verification_passed: Optional[bool] = None
+    verification_passed: bool | None = None
     emergency = EmergencyCheckpoint(cfg.checkpoint_dir)
 
     def handle_signal(signum: int, _frame: Any) -> None:
@@ -1620,7 +1625,7 @@ def train_model(cfg: TrainConfig) -> TrainResult:
         signal.signal(signal.SIGTERM, old_sigterm)
 
 
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train and export VECTOR64_NNUE.")
     parser.add_argument("--data", type=Path, help="Lichess eval dataset (.jsonl, .jsonl.zst, .bin/.epd)")
     parser.add_argument("--output", type=Path, default=Path("network.nnue"), help="Output .nnue file")
@@ -1636,7 +1641,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
 
     # Reproducibility: seed every RNG involved in training.

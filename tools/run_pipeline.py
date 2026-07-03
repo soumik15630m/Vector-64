@@ -9,15 +9,14 @@ import math
 import os
 import time
 from collections import Counter
+from collections.abc import Iterator, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any
 
 import numpy as np
-from tqdm import tqdm
-
 import train_nnue as nnue
-
+from tqdm import tqdm
 
 EXTRACTED_PATH = Path("data") / "extracted_positions.jsonl"
 SHARDS_DIR = Path("data") / "shards"
@@ -68,7 +67,7 @@ def stage_header(title: str, colors: Colors) -> None:
     print(f"\n{colors.cyan}══ {title} {line}{colors.reset}")
 
 
-def boxed(lines: List[str], colors: Colors) -> None:
+def boxed(lines: list[str], colors: Colors) -> None:
     width = max(len(line) for line in lines)
     top = "╔" + "═" * (width + 2) + "╗"
     bottom = "╚" + "═" * (width + 2) + "╝"
@@ -78,14 +77,14 @@ def boxed(lines: List[str], colors: Colors) -> None:
     print(colors.cyan + bottom + colors.reset)
 
 
-def is_hf_source(source: Optional[str]) -> bool:
+def is_hf_source(source: str | None) -> bool:
     if source is None:
         return True
     lowered = source.strip().lower()
     return lowered in {"hf", "huggingface", "huggingface://default"} or lowered.startswith("hf://")
 
 
-def hf_dataset_id(source: Optional[str]) -> str:
+def hf_dataset_id(source: str | None) -> str:
     if source is None:
         return DEFAULT_HF_DATASET
     if source.lower().startswith("hf://"):
@@ -94,7 +93,7 @@ def hf_dataset_id(source: Optional[str]) -> str:
     return DEFAULT_HF_DATASET
 
 
-def source_label(source: Optional[str]) -> str:
+def source_label(source: str | None) -> str:
     if is_hf_source(source):
         return f"hf://{hf_dataset_id(source)}"
     return str(source)
@@ -116,7 +115,7 @@ def open_jsonl_lines(path: Path) -> Iterator[str]:
             yield from fh
 
 
-def iter_source_rows(source: Optional[str]) -> Iterator[Dict[str, Any]]:
+def iter_source_rows(source: str | None) -> Iterator[dict[str, Any]]:
     if is_hf_source(source):
         try:
             from datasets import load_dataset  # type: ignore
@@ -142,7 +141,7 @@ def iter_source_rows(source: Optional[str]) -> Iterator[Dict[str, Any]]:
             yield obj
 
 
-def row_eval_cp_depth(row: Dict[str, Any]) -> Tuple[Optional[float], Optional[int], str]:
+def row_eval_cp_depth(row: dict[str, Any]) -> tuple[float | None, int | None, str]:
     if "evals" in row:
         return nnue.best_lichess_eval(row)
 
@@ -172,11 +171,11 @@ def fen_digest(fen: str) -> bytes:
 
 def extract_positions(
     *,
-    data_source: Optional[str],
+    data_source: str | None,
     output_path: Path,
     max_positions: int,
     colors: Colors,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     stats: Counter[str] = Counter()
     seen: set[bytes] = set()
@@ -292,9 +291,9 @@ def count_lines(path: Path) -> int:
 def flush_shard(
     *,
     shard_index: int,
-    rows: List[Tuple[List[int], List[int], int, float]],
+    rows: list[tuple[list[int], list[int], int, float]],
     out_dir: Path,
-) -> Tuple[Path, int]:
+) -> tuple[Path, int]:
     n = len(rows)
     white = np.full((n, MAX_FEATURES_PER_SIDE), -1, dtype=np.int32)
     black = np.full((n, MAX_FEATURES_PER_SIDE), -1, dtype=np.int32)
@@ -324,7 +323,7 @@ def build_shards(
     out_dir: Path,
     shard_size: int,
     colors: Colors,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if not extracted_path.exists():
         raise PipelineError(f"Missing extracted positions file: {extracted_path}")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -350,7 +349,7 @@ def build_shards(
             return {"positions": total_positions, "shards": start_shard_index, "seconds": 0.0, "bytes": written_bytes}
 
     remaining_positions = total_positions - skip_positions
-    rows: List[Tuple[List[int], List[int], int, float]] = []
+    rows: list[tuple[list[int], list[int], int, float]] = []
     shard_index = start_shard_index
     started = time.time()
 
@@ -472,7 +471,7 @@ def run_training_or_export(
     return nnue.train_model(cfg)
 
 
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the full VECTOR64_NNUE training pipeline.")
     parser.add_argument(
         "--data",
@@ -493,13 +492,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     colors = Colors(enabled=not args.no_color and "NO_COLOR" not in os.environ)
     no_color = args.no_color or "NO_COLOR" in os.environ
 
     device = nnue.require_cuda_or_exit(args.device)
-    if args.data is not None and not is_hf_source(args.data) and not Path(args.data).exists() and not args.skip_extraction:
+    if (
+        args.data is not None
+        and not is_hf_source(args.data)
+        and not Path(args.data).exists()
+        and not args.skip_extraction
+    ):
         print(f"{colors.red}ERROR{colors.reset}: dataset path does not exist: {args.data}")
         return 1
 
@@ -515,7 +519,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         colors,
     )
 
-    result: Optional[nnue.TrainResult] = None
+    result: nnue.TrainResult | None = None
 
     try:
         stage_header("STAGE 1 - EXTRACTION", colors)

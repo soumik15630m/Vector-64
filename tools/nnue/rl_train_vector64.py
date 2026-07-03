@@ -23,14 +23,11 @@ import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-
 from train_vector64 import Vector64NNUE
-
 
 PIECE_BUCKET = {
     1: 0,  # pawn
@@ -412,14 +409,14 @@ class ReplayBuffer:
 def train_step(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
-    scheduler: Optional[torch.optim.lr_scheduler.LRScheduler],
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None,
     replay: ReplayBuffer,
     *,
     batch_size: int,
     device: torch.device,
     amp_enabled: bool,
-    scaler: Optional[torch.amp.GradScaler],
-) -> Tuple[float, float]:
+    scaler: torch.amp.GradScaler | None,
+) -> tuple[float, float]:
     model.train(True)
     batch = replay.sample(batch_size, device)
     optimizer.zero_grad(set_to_none=True)

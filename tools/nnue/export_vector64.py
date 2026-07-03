@@ -27,10 +27,8 @@ import json
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Tuple
 
 import torch
-
 
 MAGIC = b"VECTOR64_NNUE"
 VERSION = 1
@@ -45,8 +43,8 @@ I32_MAX = 2_147_483_647
 
 @dataclass
 class ExportStats:
-    scales: Dict[str, float]
-    sections: Dict[str, Dict[str, int]]
+    scales: dict[str, float]
+    sections: dict[str, dict[str, int]]
     file_size: int
 
 
@@ -61,7 +59,7 @@ def write_padding(fh) -> None:
         fh.write(b"\x00" * (aligned - current))
 
 
-def load_state_dict(path: Path) -> Dict[str, torch.Tensor]:
+def load_state_dict(path: Path) -> dict[str, torch.Tensor]:
     obj = torch.load(path, map_location="cpu")
 
     state = None
@@ -76,7 +74,7 @@ def load_state_dict(path: Path) -> Dict[str, torch.Tensor]:
         else:
             raise TypeError(f"Unsupported checkpoint type: {type(obj)}")
 
-    out: Dict[str, torch.Tensor] = {}
+    out: dict[str, torch.Tensor] = {}
     for k, v in state.items():
         nk = k[7:] if k.startswith("module.") else k
         if isinstance(v, torch.nn.Parameter):
@@ -86,7 +84,7 @@ def load_state_dict(path: Path) -> Dict[str, torch.Tensor]:
     return out
 
 
-def require_tensor(state: Dict[str, torch.Tensor], key: str) -> torch.Tensor:
+def require_tensor(state: dict[str, torch.Tensor], key: str) -> torch.Tensor:
     if key not in state:
         available = ", ".join(sorted(state.keys())[:20])
         suffix = "..." if len(state) > 20 else ""
@@ -94,7 +92,7 @@ def require_tensor(state: Dict[str, torch.Tensor], key: str) -> torch.Tensor:
     return state[key]
 
 
-def to_matrix(t: torch.Tensor, shape: Tuple[int, int], name: str) -> torch.Tensor:
+def to_matrix(t: torch.Tensor, shape: tuple[int, int], name: str) -> torch.Tensor:
     if t.ndim != 2:
         raise ValueError(f"{name}: expected 2D tensor, got shape {tuple(t.shape)}")
     if tuple(t.shape) == shape:
@@ -123,7 +121,7 @@ def quantize_sym(
     dtype: torch.dtype,
     explicit_scale: float | None,
     name: str,
-) -> Tuple[torch.Tensor, float]:
+) -> tuple[torch.Tensor, float]:
     if explicit_scale is not None and explicit_scale <= 0:
         raise ValueError(f"{name}: scale must be positive, got {explicit_scale}")
 
@@ -213,13 +211,19 @@ def main() -> int:
     q_ft_b, s_ft_b = quantize_sym(ft_b, max_q=32767, dtype=torch.int16, explicit_scale=ft_bias_scale, name="ft_b")
 
     q_l1_w, s_l1_w = quantize_sym(l1_w, max_q=127, dtype=torch.int8, explicit_scale=args.l1_scale, name="l1_w")
-    q_l1_b, s_l1_b = quantize_sym(l1_b, max_q=I32_MAX, dtype=torch.int32, explicit_scale=args.l1_bias_scale, name="l1_b")
+    q_l1_b, s_l1_b = quantize_sym(
+        l1_b, max_q=I32_MAX, dtype=torch.int32, explicit_scale=args.l1_bias_scale, name="l1_b"
+    )
 
     q_l2_w, s_l2_w = quantize_sym(l2_w, max_q=127, dtype=torch.int8, explicit_scale=args.l2_scale, name="l2_w")
-    q_l2_b, s_l2_b = quantize_sym(l2_b, max_q=I32_MAX, dtype=torch.int32, explicit_scale=args.l2_bias_scale, name="l2_b")
+    q_l2_b, s_l2_b = quantize_sym(
+        l2_b, max_q=I32_MAX, dtype=torch.int32, explicit_scale=args.l2_bias_scale, name="l2_b"
+    )
 
     q_out_w, s_out_w = quantize_sym(out_w, max_q=127, dtype=torch.int8, explicit_scale=args.out_scale, name="out_w")
-    q_out_b, s_out_b = quantize_sym(out_b, max_q=I32_MAX, dtype=torch.int32, explicit_scale=args.out_bias_scale, name="out_b")
+    q_out_b, s_out_b = quantize_sym(
+        out_b, max_q=I32_MAX, dtype=torch.int32, explicit_scale=args.out_bias_scale, name="out_b"
+    )
 
     scales = {
         "feature_transform_weight": s_ft_w,
@@ -232,7 +236,7 @@ def main() -> int:
         "output_bias": s_out_b,
     }
 
-    sections: Dict[str, Dict[str, int]] = {}
+    sections: dict[str, dict[str, int]] = {}
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     with out_path.open("wb") as fh:

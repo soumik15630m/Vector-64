@@ -26,23 +26,22 @@ Dataset format (.npz):
 from __future__ import annotations
 
 import argparse
-import os
 import glob
 import hashlib
 import json
 import math
+import os
 import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader, Dataset, random_split
-
 
 TOTAL_FEATURES = 81920
 HIDDEN = 512
@@ -101,7 +100,7 @@ def choose_device(device_arg: str) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def require_key(data: np.lib.npyio.NpzFile, key: str) -> np.ndarray:
+def require_key(data: Any, key: str) -> np.ndarray:
     if key not in data:
         available = ", ".join(data.files)
         raise KeyError(f"Dataset missing '{key}'. Available keys: {available}")
@@ -114,9 +113,9 @@ class LoadedDataset:
     black_idx: torch.Tensor
     stm: torch.Tensor
     target_cp: torch.Tensor
-    white_vals: Optional[torch.Tensor]
-    black_vals: Optional[torch.Tensor]
-    sample_weight: Optional[torch.Tensor]
+    white_vals: torch.Tensor | None
+    black_vals: torch.Tensor | None
+    sample_weight: torch.Tensor | None
     raw_count: int
 
 
@@ -127,7 +126,7 @@ def load_dataset(
     result_scale: float,
     max_target_cp: float,
     max_positions: int,
-    shard_slice: str = None,
+    shard_slice: str | None = None,
 ) -> LoadedDataset:
     if not 0.0 <= result_blend <= 1.0:
         raise ValueError("--result-blend must be in [0, 1]")
@@ -159,7 +158,7 @@ def load_dataset(
             keys = list(first.keys())
 
         # 2. Collect all arrays from all files
-        collected = {k: [] for k in keys}
+        collected: dict[str, list[np.ndarray]] = {k: [] for k in keys}
 
         for i, f in enumerate(files):
             if i % 20 == 0:
@@ -264,7 +263,7 @@ def dataset_sha256(path: Path, chunk_size: int = 8 * 1024 * 1024) -> str:
     return h.hexdigest()
 
 
-def resolve_manifest_path(dataset_path: Path, explicit_manifest: Optional[str]) -> Path:
+def resolve_manifest_path(dataset_path: Path, explicit_manifest: str | None) -> Path:
     if explicit_manifest:
         p = Path(explicit_manifest)
         if not p.exists():
@@ -434,7 +433,7 @@ class FeatureTransform(nn.Module):
         self.bias = nn.Parameter(torch.zeros(hidden))
         nn.init.normal_(self.weight, mean=0.0, std=0.02)
 
-    def forward(self, indices: torch.Tensor, values: Optional[torch.Tensor]) -> torch.Tensor:
+    def forward(self, indices: torch.Tensor, values: torch.Tensor | None) -> torch.Tensor:
         # indices: [B, K], with -1 padding
         valid = indices >= 0
         safe = torch.clamp(indices, min=0)
@@ -460,8 +459,8 @@ class Vector64NNUE(nn.Module):
         white_idx: torch.Tensor,
         black_idx: torch.Tensor,
         stm: torch.Tensor,
-        white_vals: Optional[torch.Tensor] = None,
-        black_vals: Optional[torch.Tensor] = None,
+        white_vals: torch.Tensor | None = None,
+        black_vals: torch.Tensor | None = None,
     ) -> torch.Tensor:
         white_acc = self.feature_transform(white_idx, white_vals)
         black_acc = self.feature_transform(black_idx, black_vals)
@@ -477,7 +476,7 @@ class Vector64NNUE(nn.Module):
         return x
 
 
-def weighted_mse(pred: torch.Tensor, target: torch.Tensor, weight: Optional[torch.Tensor]) -> torch.Tensor:
+def weighted_mse(pred: torch.Tensor, target: torch.Tensor, weight: torch.Tensor | None) -> torch.Tensor:
     err = (pred - target) ** 2
     if weight is None:
         return err.mean()
@@ -496,11 +495,11 @@ def run_epoch(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
-    optimizer: Optional[torch.optim.Optimizer],
-    scaler: Optional[torch.amp.GradScaler],
+    optimizer: torch.optim.Optimizer | None,
+    scaler: torch.amp.GradScaler | None,
     amp_enabled: bool,
     log_every: int,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     train_mode = optimizer is not None
     model.train(train_mode)
 
@@ -513,6 +512,7 @@ def run_epoch(
         batch = move_batch_to_device(batch, device)
 
         if train_mode:
+            assert optimizer is not None  # train_mode implies an optimizer was constructed
             optimizer.zero_grad(set_to_none=True)
 
         with torch.amp.autocast(device_type=device.type, enabled=amp_enabled):
@@ -584,6 +584,8 @@ def main() -> int:
     val_count = min(max(val_count, 0), total - 1)
     train_count = total - val_count
 
+    train_ds: Dataset[Any]
+    val_ds: Dataset[Any] | None
     if val_count > 0:
         generator = torch.Generator().manual_seed(args.seed)
         train_ds, val_ds = random_split(dataset, [train_count, val_count], generator=generator)

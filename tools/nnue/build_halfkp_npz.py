@@ -23,12 +23,11 @@ import io
 import json
 import sqlite3
 import sys
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
-
 
 PIECE_BUCKET = {
     1: 0,  # pawn
@@ -78,17 +77,17 @@ class ParsedFen:
     white_king_sq: int
     black_king_sq: int
     # tuples: (square, piece_type 1..6, color 0=white/1=black)
-    pieces: List[Tuple[int, int, int]]
+    pieces: list[tuple[int, int, int]]
 
 
 @dataclass
 class CpSummary:
-    min: Optional[float] = None
-    max: Optional[float] = None
+    min: float | None = None
+    max: float | None = None
     mean: float = 0.0
     std: float = 0.0
-    bins: List[float] = None  # type: ignore[assignment]
-    counts: List[int] = None  # type: ignore[assignment]
+    bins: list[float] = None  # type: ignore[assignment]
+    counts: list[int] = None  # type: ignore[assignment]
 
 
 def parse_args() -> argparse.Namespace:
@@ -131,7 +130,7 @@ def _to_int(x, default: int = 0) -> int:
         return default
 
 
-def _to_float(x) -> Optional[float]:
+def _to_float(x) -> float | None:
     try:
         return float(x)
     except Exception:
@@ -149,10 +148,10 @@ def _canonical_fen_key(fen: str) -> str:
 
 
 class Deduper:
-    def __init__(self, scope: str, db_path: Optional[Path] = None):
+    def __init__(self, scope: str, db_path: Path | None = None):
         self.scope = scope
         self._shard_seen: set[bytes] = set()
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
         self._txn_count = 0
         self._txn_flush_every = 20_000
 
@@ -225,17 +224,18 @@ def _iter_lines(path: Path) -> Iterator[str]:
             yield line
 
 
-def _extract_cp(record: dict, min_depth: int, min_knodes: int) -> Tuple[Optional[float], str, int, int]:
+def _extract_cp(record: dict, min_depth: int, min_knodes: int) -> tuple[float | None, str, int, int]:
     # Returns: (cp_or_none, reason, depth, knodes)
     # reason in {"ok","mate","depth","knodes","no_eval"}
     had_mate = False
     had_depth = False
     had_knodes = False
-    candidates: List[Tuple[int, int, float]] = []
+    candidates: list[tuple[int, int, float]] = []
 
     evals = record.get("evals")
     has_evals_array = isinstance(evals, list)
     if has_evals_array:
+        assert isinstance(evals, list)  # narrow for type checkers; guarded by has_evals_array
         for e in evals:
             if not isinstance(e, dict):
                 continue
@@ -249,7 +249,7 @@ def _extract_cp(record: dict, min_depth: int, min_knodes: int) -> Tuple[Optional
                 had_knodes = True
                 continue
 
-            score_candidates: List[dict] = []
+            score_candidates: list[dict] = []
             pvs = e.get("pvs")
             if isinstance(pvs, list):
                 for pv in pvs:
@@ -260,7 +260,7 @@ def _extract_cp(record: dict, min_depth: int, min_knodes: int) -> Tuple[Optional
             if not score_candidates:
                 score_candidates.append(e)
 
-            best_cp_for_eval: Optional[float] = None
+            best_cp_for_eval: float | None = None
             for s in score_candidates:
                 mate = s.get("mate")
                 if mate is not None:
@@ -327,7 +327,7 @@ def _parse_fen_minimal(fen: str) -> ParsedFen:
 
     rank = 7
     file = 0
-    pieces: List[Tuple[int, int, int]] = []
+    pieces: list[tuple[int, int, int]] = []
 
     for ch in board_field:
         if ch == "/":
@@ -424,13 +424,13 @@ def _phase_bucket_from_parsed(parsed: ParsedFen) -> str:
 
 
 def _finalize_cp_summary(
-    cp_min: Optional[float],
-    cp_max: Optional[float],
+    cp_min: float | None,
+    cp_max: float | None,
     cp_sum: float,
     cp_sum_sq: float,
     n: int,
-    edges: List[float],
-    counts: List[int],
+    edges: list[float],
+    counts: list[int],
 ) -> CpSummary:
     if n <= 0:
         return CpSummary(
@@ -458,10 +458,10 @@ def _write_shard(
     out_dir: Path,
     prefix: str,
     shard_index: int,
-    white_rows: List[np.ndarray],
-    black_rows: List[np.ndarray],
-    stm_rows: List[int],
-    cp_rows: List[float],
+    white_rows: list[np.ndarray],
+    black_rows: list[np.ndarray],
+    stm_rows: list[int],
+    cp_rows: list[float],
     compressed: bool,
 ) -> ShardInfo:
     shard_name = f"{prefix}_{shard_index:05d}.npz"
@@ -540,23 +540,23 @@ def main() -> int:
     deduper.begin_shard()
 
     stats = Stats()
-    shards: List[ShardInfo] = []
+    shards: list[ShardInfo] = []
 
-    phase_hist: Dict[str, int] = {"opening": 0, "middlegame": 0, "endgame": 0}
-    depth_hist: Dict[str, int] = {}
+    phase_hist: dict[str, int] = {"opening": 0, "middlegame": 0, "endgame": 0}
+    depth_hist: dict[str, int] = {}
 
     cp_bins = 20
     cp_edges = np.linspace(-float(args.max_abs_cp), float(args.max_abs_cp), num=cp_bins + 1, dtype=np.float64).tolist()
     cp_counts = [0 for _ in range(cp_bins)]
-    cp_min: Optional[float] = None
-    cp_max: Optional[float] = None
+    cp_min: float | None = None
+    cp_max: float | None = None
     cp_sum = 0.0
     cp_sum_sq = 0.0
 
-    white_rows: List[np.ndarray] = []
-    black_rows: List[np.ndarray] = []
-    stm_rows: List[int] = []
-    cp_rows: List[float] = []
+    white_rows: list[np.ndarray] = []
+    black_rows: list[np.ndarray] = []
+    stm_rows: list[int] = []
+    cp_rows: list[float] = []
 
     def flush_shard() -> None:
         if not cp_rows:

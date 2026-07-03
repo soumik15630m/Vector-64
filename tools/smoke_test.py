@@ -10,11 +10,11 @@ import shutil
 import struct
 import sys
 from collections import Counter
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any
 
 import train_nnue as nnue
-
 
 DEFAULT_HF_DATASET = "Lichess/chess-position-evaluations"
 
@@ -77,7 +77,7 @@ def check_python_and_deps(colors: Colors) -> None:
         ("zstandard", "zstandard", "pip install zstandard"),
         ("datasets", "datasets", "pip install datasets"),
     ]
-    missing: List[str] = []
+    missing: list[str] = []
     for display, module_name, install in packages:
         try:
             module = importlib.import_module(module_name)
@@ -203,7 +203,7 @@ def check_fens(colors: Colors) -> None:
     ok(colors, "FEN parser and HalfKP feature generation are consistent")
 
 
-def make_synthetic_batch() -> Dict[str, Any]:
+def make_synthetic_batch() -> dict[str, Any]:
     fens = nnue.VERIFY_FENS[:4]
     samples = []
     for fen in fens:
@@ -304,7 +304,7 @@ def open_data_lines(path: Path) -> Iterator[str]:
             yield from fh
 
 
-def row_eval_cp_depth(row: Dict[str, Any]) -> Tuple[Optional[float], Optional[int], str]:
+def row_eval_cp_depth(row: dict[str, Any]) -> tuple[float | None, int | None, str]:
     if "evals" in row:
         return nnue.best_lichess_eval(row)
 
@@ -327,7 +327,7 @@ def row_eval_cp_depth(row: Dict[str, Any]) -> Tuple[Optional[float], Optional[in
     return None, depth, "no_cp"
 
 
-def iter_hf_rows() -> Iterator[Dict[str, Any]]:
+def iter_hf_rows() -> Iterator[dict[str, Any]]:
     try:
         from datasets import load_dataset  # type: ignore
     except ImportError as exc:
@@ -339,7 +339,7 @@ def iter_hf_rows() -> Iterator[Dict[str, Any]]:
             yield row
 
 
-def iter_local_json_rows(path: Path) -> Iterator[Dict[str, Any]]:
+def iter_local_json_rows(path: Path) -> Iterator[dict[str, Any]]:
     for line in open_data_lines(path):
         try:
             obj = json.loads(line)
@@ -350,7 +350,7 @@ def iter_local_json_rows(path: Path) -> Iterator[Dict[str, Any]]:
             yield obj
 
 
-def check_data_file(colors: Colors, data_path: Optional[Path]) -> None:
+def check_data_file(colors: Colors, data_path: Path | None) -> None:
     print(f"{colors.cyan}7 - Data file check{colors.reset}")
     if data_path is None:
         print(f"No --data provided; validating default Hugging Face stream: {DEFAULT_HF_DATASET}")
@@ -386,7 +386,10 @@ def check_data_file(colors: Colors, data_path: Optional[Path]) -> None:
     except OSError as exc:
         fail(f"Could not read {source_hint}: {exc}. Fix: check file permissions and path.")
     except Exception as exc:
-        fail(f"Could not sample {source_hint}: {exc}. Fix: check internet access, install datasets, or pass --data PATH.")
+        fail(
+            f"Could not sample {source_hint}: {exc}. "
+            "Fix: check internet access, install datasets, or pass --data PATH."
+        )
 
     print(f"sampled lines: {min(total, 500)}")
     print(f"valid rows with fen: {valid_json_with_fen}")
@@ -462,14 +465,14 @@ def check_disk_space(colors: Colors) -> None:
     ok(colors, "Disk space check completed")
 
 
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Pre-flight checks for the VECTOR64_NNUE pipeline.")
     parser.add_argument("--data", type=Path, default=None, help="Optional Lichess dataset path to validate")
     parser.add_argument("--no-color", action="store_true", help="Disable ANSI colors")
     return parser.parse_args(argv)
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     colors = Colors(enabled=not args.no_color and "NO_COLOR" not in os.environ)
     try:

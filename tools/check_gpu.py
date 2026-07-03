@@ -1,5 +1,7 @@
-import torch
 import time
+
+import torch
+
 
 def check_gpu():
     print(f"PyTorch Version: {torch.__version__}")

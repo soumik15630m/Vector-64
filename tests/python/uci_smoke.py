@@ -20,7 +20,7 @@ class UciSession:
             text=True,
             bufsize=1,
         )
-        self.lines: "queue.Queue[str]" = queue.Queue()
+        self.lines: queue.Queue[str] = queue.Queue()
         self.reader = threading.Thread(target=self._reader_loop, daemon=True)
         self.reader.start()
 
