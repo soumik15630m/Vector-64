@@ -15,7 +15,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+      # ENGINE_NATIVE=OFF: this artifact is downloaded and executed by the
+      # correctness jobs below, which land on *different* runner CPUs. A
+      # -march=native build would bake in the build runner's ISA and SIGILL on
+      # any older downstream runner. The portable baseline (magic bitboards +
+      # scalar NNUE via the compile-time fallbacks) runs everywhere and keeps
+      # the same deterministic node counts.
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_NATIVE=OFF && cmake --build build -j
       - uses: actions/upload-artifact@v4
         with:
           name: engine-linux
