@@ -6,143 +6,253 @@ on:
 
 permissions:
   contents: read
-  checks: write
-  pull-requests: write
 
 jobs:
-  # C++ test suite: perft (per position, per depth), state/eval invariants and
-  # the search signature — each a named ctest — across four compilers.
-  build-and-test:
-    name: ${{ matrix.os }} ${{ matrix.cxx }}
+  # Build once on Linux; the granular correctness checks below reuse the
+  # binaries so each check is a single, fast, clearly-named goal.
+  build:
+    name: build · linux release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-linux
+          path: |
+            build/bin/ChessEngine
+            build/bin/test_zobrist
+
+  # ---- perft: one check per reference position (all depths) ----
+  perft-startpos:
+    name: perft · startpos
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: |
+          chmod +x ChessEngine
+          ./ChessEngine --perft-one "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" 1 20
+          ./ChessEngine --perft-one "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" 3 8902
+          ./ChessEngine --perft-one "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" 5 4865609
+
+  perft-kiwipete:
+    name: perft · kiwipete
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: |
+          chmod +x ChessEngine
+          ./ChessEngine --perft-one "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1" 3 97862
+          ./ChessEngine --perft-one "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1" 5 193690690
+
+  perft-position3:
+    name: perft · position 3 (endgame)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: |
+          chmod +x ChessEngine
+          ./ChessEngine --perft-one "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1" 5 674624
+          ./ChessEngine --perft-one "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1" 6 11030083
+
+  perft-position4:
+    name: perft · position 4 (promotions)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: |
+          chmod +x ChessEngine
+          ./ChessEngine --perft-one "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1" 4 422333
+          ./ChessEngine --perft-one "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1" 5 15833292
+
+  perft-position5:
+    name: perft · position 5
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: |
+          chmod +x ChessEngine
+          ./ChessEngine --perft-one "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8" 4 2103487
+
+  perft-position6:
+    name: perft · position 6
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: |
+          chmod +x ChessEngine
+          ./ChessEngine --perft-one "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10" 4 3894594
+
+  # ---- state / evaluation invariants ----
+  nnue-bitexact:
+    name: nnue · simd == scalar
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: chmod +x test_zobrist && ./test_zobrist nnue
+
+  state-consistency:
+    name: state · make/unmake + movegen
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: chmod +x test_zobrist && ./test_zobrist games
+
+  bench-signature:
+    name: search · bench signature
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: chmod +x ChessEngine && bash tools/bench_signature.sh ./ChessEngine
+
+  # ---- UCI behaviour: one check per behaviour group ----
+  uci-protocol:
+    name: uci · protocol
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.x' }
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: |
+          chmod +x ChessEngine
+          python -m pip install pytest
+          ENGINE_BIN=$PWD/ChessEngine python -m pytest tests/python/test_uci_behavior.py -v -k "handshake or isready or ucinewgame or startpos_returns"
+
+  uci-mates:
+    name: uci · mate / stalemate
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.x' }
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: |
+          chmod +x ChessEngine
+          python -m pip install pytest
+          ENGINE_BIN=$PWD/ChessEngine python -m pytest tests/python/test_uci_behavior.py -v -k "mate or stalemate or checkmate"
+
+  uci-rules:
+    name: uci · rules (promotion / searchmoves / illegal)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.x' }
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: |
+          chmod +x ChessEngine
+          python -m pip install pytest
+          ENGINE_BIN=$PWD/ChessEngine python -m pytest tests/python/test_uci_behavior.py -v -k "illegal or promotion or searchmoves"
+
+  uci-limits:
+    name: uci · search limits
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.x' }
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      - run: |
+          chmod +x ChessEngine
+          python -m pip install pytest
+          ENGINE_BIN=$PWD/ChessEngine python -m pytest tests/python/test_uci_behavior.py -v -k "nodes_limit or bench_signature"
+
+  # ---- portability: full ctest on other compilers / OSes ----
+  portability:
+    name: portability · ${{ matrix.id }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,  cc: gcc,   cxx: g++,     id: linux-gcc }
           - { os: ubuntu-latest,  cc: clang, cxx: clang++, id: linux-clang }
-          - { os: macos-latest,                            id: macos }
-          - { os: windows-latest,                          id: windows }
+          - { os: macos-latest,                            id: macos-arm64 }
+          - { os: windows-latest,                          id: windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Configure (Unix)
+      - name: Configure & build (Unix)
         if: runner.os != 'Windows'
         run: |
           EXTRA=""
           if [ -n "${{ matrix.cxx }}" ]; then EXTRA="-DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}"; fi
           if [ "${{ runner.os }}" = "macOS" ]; then EXTRA="$EXTRA -DENGINE_NATIVE=OFF"; fi
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release $EXTRA
-      - name: Build (Unix)
-        if: runner.os != 'Windows'
-        run: cmake --build build -j
+          cmake --build build -j
       - name: Test (Unix)
         if: runner.os != 'Windows'
-        run: ctest --test-dir build --output-on-failure --output-junit "$GITHUB_WORKSPACE/ctest.xml"
-
-      - name: Configure (Windows)
+        run: ctest --test-dir build --output-on-failure
+      - name: Configure & build (Windows)
         if: runner.os == 'Windows'
-        run: cmake -S . -B build
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        run: cmake --build build --config Release
+        run: cmake -S . -B build && cmake --build build --config Release
       - name: Test (Windows)
         if: runner.os == 'Windows'
-        run: ctest --test-dir build -C Release --output-on-failure --output-junit "${{ github.workspace }}/ctest.xml"
+        run: ctest --test-dir build -C Release --output-on-failure
 
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: results-${{ matrix.id }}
-          path: ctest.xml
-          if-no-files-found: warn
-
+  # ---- safety & style ----
   sanitizers:
-    name: linux asan+ubsan
+    name: safety · asan + ubsan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Configure (ASan + UBSan, Debug, no LTO)
-        run: >
+      - run: >
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Debug -DENGINE_LTO=OFF -DENGINE_NATIVE=OFF
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
-      - name: Build
-        run: cmake --build build -j
-      - name: Consistency test under sanitizers
-        working-directory: build
-        run: ./bin/test_zobrist
-      - name: Bench under sanitizers
-        working-directory: build
-        run: printf "setoption name Threads value 1\nbench 8\nquit\n" | ./bin/ChessEngine
+          && cmake --build build -j
+      - run: ./build/bin/test_zobrist
+      - run: printf "setoption name Threads value 1\nbench 8\nquit\n" | ./build/bin/ChessEngine
 
-  integration:
-    name: uci behaviour
+  lint:
+    name: python · ruff
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-      - name: Build engine
-        run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build -j
-      - name: Install pytest
-        run: python -m pip install pytest
-      - name: UCI behaviour suite
-        env:
-          ENGINE_BIN: build/bin/ChessEngine
-        run: python -m pytest tests/python/test_uci_behavior.py -v --junitxml=pytest-uci.xml
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: results-uci
-          path: pytest-uci.xml
+        with: { python-version: '3.x' }
+      - run: python -m pip install -r requirements-dev.txt && python -m ruff check tools tests
 
-  python-quality:
-    name: python lint + types + unit
+  types:
+    name: python · mypy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-      - name: Install dev tooling
-        run: python -m pip install -r requirements-dev.txt
-      - name: Ruff (lint)
-        run: python -m ruff check tools tests
-      - name: Mypy (types)
-        run: python -m mypy tools tests/python
-      - name: Pytest (contract tests)
-        run: python -m pytest tests/python/test_feature_encoding.py -v --junitxml=pytest-unit.xml
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: results-unit
-          path: pytest-unit.xml
+        with: { python-version: '3.x' }
+      - run: python -m pip install -r requirements-dev.txt && python -m mypy tools tests/python
 
-  # Aggregate every JUnit report into one "Test Results" check so all ~48
-  # named tests are visible with pass/fail before merging.
-  test-results:
-    name: test results
-    needs: [build-and-test, integration, python-quality]
+  unit:
+    name: python · unit (feature contract)
     runs-on: ubuntu-latest
-    if: always()
-    permissions:
-      checks: write
-      pull-requests: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: results
-          pattern: results-*
-      - name: Publish test results
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        with:
-          files: results/**/*.xml
-          check_name: "Test Results (perft + invariants + UCI + unit)"
-          comment_mode: "off"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.x' }
+      - run: python -m pip install pytest && python -m pytest tests/python/test_feature_encoding.py -v
