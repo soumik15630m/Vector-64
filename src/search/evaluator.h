@@ -2,7 +2,7 @@
 #define SEARCH_EVALUATOR_H
 
 #include "../cores/position.h"
-#include "../nnue/nnue.h"
+#include "../nnue/network.h"
 
 #include <string>
 
@@ -16,7 +16,7 @@ public:
   int evaluate(const Core::Position &pos) const;
 
 private:
-  NNUE::Runtime nnue_{};
+  NNUE::Network net_{};
   int nnueWeight_ = 8;
   int psqtWeight_ = 2;
 };

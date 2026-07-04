@@ -5,7 +5,7 @@
 #include "cores/movegen.h"
 #include "cores/position.h"
 #include "cores/zobrist.h"
-#include "nnue/nnue.h"
+#include "nnue/network.h"
 
 #include <cstdio>
 #include <random>
@@ -127,12 +127,12 @@ int main(int argc, char **argv) {
   const bool runGames = (which == "all" || which == "games");
 
   if (runNnue) {
-    if (!NNUE::Runtime::self_test_quantized_inference()) {
-      std::printf("FAIL: AVX2 quantized NNUE inference differs from scalar "
-                  "reference\n");
+    if (!NNUE::Network::self_test()) {
+      std::printf("FAIL: NNUE inference/accumulator self-test failed\n");
       return 1;
     }
-    std::printf("PASS: quantized NNUE inference bit-exact (SIMD == scalar)\n");
+    std::printf("PASS: NNUE inference bit-exact (SIMD == scalar) and "
+                "incremental == rebuild\n");
   }
   if (!runGames)
     return 0;

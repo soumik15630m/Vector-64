@@ -62,8 +62,7 @@ set(CORE_SOURCES
         src/search/move_ordering.cpp
         src/search/evaluator.cpp
         src/search/search.cpp
-        src/nnue/nnue.cpp
-        src/nnue/nnue_adapter.cpp
+        src/nnue/network.cpp
 )
 
 set(CORE_HEADERS
@@ -79,8 +78,8 @@ set(CORE_HEADERS
         src/search/move_ordering.h
         src/search/evaluator.h
         src/search/search.h
-        src/nnue/nnue.h
-        src/nnue/nnue_adapter.h
+        src/nnue/halfka.h
+        src/nnue/network.h
 )
 
 add_library(chess_core STATIC ${CORE_SOURCES} ${CORE_HEADERS})
