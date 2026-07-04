@@ -25,12 +25,34 @@ inline uint8_t clip(int v) {
 }
 
 // Pairwise clipped-ReLU: 512 int16 accumulator -> 256 uint8 activations.
+// The two elements of each pair are the halves of the accumulator,
+// out[i] = clip(acc[i]) * clip(acc[i + 256]) >> 7, which is contiguous and so
+// vectorizes without lane shuffles. Products of two [0,127] values fit int16.
 void pairwise(const int16_t *RESTRICT acc, uint8_t *RESTRICT out) {
+#if defined(__AVX2__)
+  const __m256i zero = _mm256_setzero_si256();
+  const __m256i maxv = _mm256_set1_epi16(ACT_MAX);
+  const auto cl = [&](int off) {
+    const __m256i v =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i *>(acc + off));
+    return _mm256_min_epi16(_mm256_max_epi16(v, zero), maxv);
+  };
+  for (int i = 0; i < PAIR; i += 32) {
+    const __m256i p0 =
+        _mm256_srli_epi16(_mm256_mullo_epi16(cl(i), cl(i + PAIR)), PAIR_SHIFT);
+    const __m256i p1 = _mm256_srli_epi16(
+        _mm256_mullo_epi16(cl(i + 16), cl(i + PAIR + 16)), PAIR_SHIFT);
+    const __m256i packed =
+        _mm256_permute4x64_epi64(_mm256_packus_epi16(p0, p1), 0xD8);
+    _mm256_storeu_si256(reinterpret_cast<__m256i *>(out + i), packed);
+  }
+#else
   for (int i = 0; i < PAIR; ++i) {
-    const int a = clip(acc[2 * i]);
-    const int b = clip(acc[2 * i + 1]);
+    const int a = clip(acc[i]);
+    const int b = clip(acc[i + PAIR]);
     out[i] = static_cast<uint8_t>((a * b) >> PAIR_SHIFT);
   }
+#endif
 }
 
 // Integer dot product of non-negative uint8 activations with int8 weights.
@@ -355,10 +377,10 @@ bool Network::self_test() {
     const auto &them = a.acc[~stm];
     std::array<uint8_t, L1_IN> l1in{};
     for (int i = 0; i < PAIR; ++i) {
-      const int va = clip(us[2 * i]), vb = clip(us[2 * i + 1]);
-      l1in[i] = static_cast<uint8_t>((va * vb) >> PAIR_SHIFT);
-      const int wa = clip(them[2 * i]), wb = clip(them[2 * i + 1]);
-      l1in[PAIR + i] = static_cast<uint8_t>((wa * wb) >> PAIR_SHIFT);
+      l1in[i] = static_cast<uint8_t>((clip(us[i]) * clip(us[i + PAIR])) >>
+                                     PAIR_SHIFT);
+      l1in[PAIR + i] = static_cast<uint8_t>(
+          (clip(them[i]) * clip(them[i + PAIR])) >> PAIR_SHIFT);
     }
     const Bucket &b = net->buckets_[bucket];
     std::array<uint8_t, L1> l1o{};
