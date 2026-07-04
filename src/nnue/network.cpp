@@ -56,20 +56,28 @@ void pairwise(const int16_t *RESTRICT acc, uint8_t *RESTRICT out) {
 }
 
 // Integer dot product of non-negative uint8 activations with int8 weights.
-// Scalar and AVX2 forms are numerically identical (no saturation: pair sums of
-// two u8*i8 products stay within int16).
+// All forms are numerically identical: VNNI (vpdpbusd) accumulates products in
+// int32; the AVX2 maddubs pair-sums stay within int16 for our ranges; scalar is
+// the reference. When the build enables AVX-VNNI (e.g. -march=native on Alder
+// Lake+), the single-instruction dpbusd path is used, inlined -- no dispatch.
 int dot(const uint8_t *RESTRICT a, const int8_t *RESTRICT w, int n) {
 #if defined(__AVX2__)
   __m256i acc = _mm256_setzero_si256();
+#if !defined(__AVXVNNI__)
   const __m256i ones = _mm256_set1_epi16(1);
+#endif
   int i = 0;
   for (; i + 32 <= n; i += 32) {
     const __m256i va =
         _mm256_loadu_si256(reinterpret_cast<const __m256i *>(a + i));
     const __m256i vw =
         _mm256_loadu_si256(reinterpret_cast<const __m256i *>(w + i));
+#if defined(__AVXVNNI__)
+    acc = _mm256_dpbusd_avx_epi32(acc, va, vw);
+#else
     acc = _mm256_add_epi32(
         acc, _mm256_madd_epi16(_mm256_maddubs_epi16(va, vw), ones));
+#endif
   }
   __m128i lo = _mm256_castsi256_si128(acc);
   __m128i hi = _mm256_extracti128_si256(acc, 1);
