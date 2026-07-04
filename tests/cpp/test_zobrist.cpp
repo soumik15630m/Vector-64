@@ -141,9 +141,14 @@ int main(int argc, char **argv) {
   constexpr int MAX_PLIES = 120;
   std::mt19937_64 rng(0xC0FFEEULL);
 
+  NNUE::Network net;
+  net.randomize(0xACC0FFEEULL);
+
   for (int game = 0; game < GAMES; ++game) {
     Position pos;
     pos.setFromFEN(STARTPOS_FEN);
+    NNUE::Accumulator acc;
+    net.refresh(pos, acc);
 
     for (int ply = 0; ply < MAX_PLIES; ++ply) {
       MoveList moves;
@@ -185,6 +190,17 @@ int main(int argc, char **argv) {
       }
 
       pos.make_move(move, undo);
+
+      NNUE::Accumulator child;
+      net.update(acc, child, pos, move, undo);
+      NNUE::Accumulator fresh;
+      net.refresh(pos, fresh);
+      if (child.acc != fresh.acc || child.psqt != fresh.psqt) {
+        std::printf("FAIL game %d ply %d: NNUE incremental != rebuild\n%s\n",
+                    game, ply, pos.toFEN().c_str());
+        return 1;
+      }
+      acc = child;
     }
   }
 

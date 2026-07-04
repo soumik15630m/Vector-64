@@ -88,6 +88,14 @@ public:
   void apply_delta(Core::Color persp, const int *added, int nAdded,
                    const int *removed, int nRemoved, Accumulator &a) const;
 
+  // Derive `child` from `parent` for the move `m` (already played, so `after`
+  // is the resulting position and `ui` carries the captured piece). A
+  // perspective is refreshed only when its own king moved; otherwise the few
+  // changed features are applied incrementally.
+  void update(const Accumulator &parent, Accumulator &child,
+              const Core::Position &after, Core::Move m,
+              const Core::UndoInfo &ui) const;
+
   // Side-to-move centipawn evaluation from a built accumulator.
   int evaluate(const Core::Position &pos, const Accumulator &a) const;
   // Same, but also fills `probe` (for the visualizer).

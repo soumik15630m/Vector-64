@@ -238,11 +238,15 @@ private:
 } // namespace
 
 EngineSearch::EngineSearch(size_t hashMb)
-    : hashMb_(hashMb), ownTt_(hashMb), tt_(&ownTt_), eval_(&evaluator_) {}
+    : hashMb_(hashMb), ownTt_(hashMb), tt_(&ownTt_), eval_(&evaluator_) {
+  accStack_.resize(MAX_PLY + 2);
+}
 
 EngineSearch::EngineSearch(TranspositionTable *sharedTt,
                            const Evaluator *sharedEval)
-    : hashMb_(1), ownTt_(1), tt_(sharedTt), eval_(sharedEval) {}
+    : hashMb_(1), ownTt_(1), tt_(sharedTt), eval_(sharedEval) {
+  accStack_.resize(MAX_PLY + 2);
+}
 
 void EngineSearch::set_hash_mb(size_t hashMb) {
   hashMb_ = std::max<size_t>(1, hashMb);
@@ -263,6 +267,12 @@ bool EngineSearch::load_nnue(const std::string &path) {
 }
 
 int EngineSearch::evaluate(const Core::Position &pos) {
+  return eval_->evaluate(pos);
+}
+
+int EngineSearch::eval_pos(const Core::Position &pos, int ply) {
+  if (nnueActive_)
+    return eval_->evaluate(pos, accStack_[ply]);
   return eval_->evaluate(pos);
 }
 
@@ -330,7 +340,7 @@ HOT_FN int EngineSearch::quiescence(Core::Position &pos, int alpha, int beta,
   if (!inCheck) {
     standPat = (tte != nullptr && tte->eval != TT_EVAL_NONE)
                    ? tte->eval
-                   : eval_->evaluate(pos);
+                   : eval_pos(pos, ply);
 
     if (standPat >= beta) {
       tt_->store(key, standPat, Core::Move::none(), 0, BOUND_LOWER, ply,
@@ -394,6 +404,8 @@ HOT_FN int EngineSearch::quiescence(Core::Position &pos, int alpha, int beta,
     tt_->prefetch(pos.key_after(move));
     Core::UndoInfo undo{};
     pos.make_move(move, undo);
+    if (nnueActive_)
+      eval_->nnue_update(accStack_[ply], accStack_[ply + 1], pos, move, undo);
     const int score =
         -quiescence(pos, -beta, -alpha, ply + 1, limits, callbacks);
     pos.unmake_move(move, undo);
@@ -474,7 +486,7 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
   } else if (tte != nullptr && tte->eval != TT_EVAL_NONE) {
     staticEval = tte->eval;
   } else {
-    staticEval = eval_->evaluate(pos);
+    staticEval = eval_pos(pos, ply);
   }
 
   // When the TT score bounds the true value from the right side, it is
@@ -506,6 +518,8 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
 
     Core::UndoInfo undo;
     pos.make_null_move(undo);
+    if (nnueActive_)
+      accStack_[ply + 1] = accStack_[ply]; // null move: no feature change
     const int nullScore = -negamax(pos, depth - 1 - R, -beta, -beta + 1,
                                    ply + 1, limits, callbacks);
     pos.unmake_null_move(undo);
@@ -543,6 +557,8 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     tt_->prefetch(pos.key_after(move));
     Core::UndoInfo undo{};
     pos.make_move(move, undo);
+    if (nnueActive_)
+      eval_->nnue_update(accStack_[ply], accStack_[ply + 1], pos, move, undo);
 
     const int newDepth = depth - 1 + extension;
     int score;
@@ -648,6 +664,8 @@ int EngineSearch::search_root(Core::Position &root, Core::MoveList &rootMoves,
     tt_->prefetch(root.key_after(move));
     Core::UndoInfo undo{};
     root.make_move(move, undo);
+    if (nnueActive_)
+      eval_->nnue_update(accStack_[0], accStack_[1], root, move, undo);
 
     const int newDepth = depth - 1 + extension;
     int score;
@@ -790,6 +808,11 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
   out.bestMove = rootMoves[0];
   int prevScore = 0;
 
+  // Build the root accumulator once; the search maintains it incrementally.
+  nnueActive_ = eval_->nnue_active();
+  if (nnueActive_)
+    eval_->nnue_refresh(root, accStack_[0]);
+
   for (int depth = 1; depth <= limits.maxDepth; ++depth) {
     if (check_stop(limits, callbacks))
       break;
@@ -857,7 +880,7 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
   // If even depth 1 didn't finish (very tight deadline), fall back to
   // the first legal move with a static eval score.
   if (out.completedDepth == 0) {
-    out.scoreCp = eval_->evaluate(root);
+    out.scoreCp = eval_pos(root, 0);
   }
   out.nodes = nodes_;
 

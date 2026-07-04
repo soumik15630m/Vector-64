@@ -75,6 +75,10 @@ private:
   bool check_stop(const Limits &limits, const Callbacks &callbacks);
   void update_pv(int ply, Core::Move move);
 
+  // Evaluate `pos` at `ply`, using the incrementally maintained accumulator
+  // when a net is loaded, else the classical path.
+  int eval_pos(const Core::Position &pos, int ply);
+
   int negamax(Core::Position &pos, int depth, int alpha, int beta, int ply,
               const Limits &limits, const Callbacks &callbacks);
 
@@ -105,6 +109,11 @@ private:
   MoveOrdering ordering_;
   Evaluator evaluator_;
   const Evaluator *eval_; // evaluator_, or the master's on helpers
+
+  // Per-thread NNUE accumulator stack, indexed by ply. Active only while a net
+  // is loaded; the classical path never touches it.
+  std::vector<NNUE::Accumulator> accStack_;
+  bool nnueActive_ = false;
 
   // Live only while a multi-threaded search runs; lets the master
   // aggregate helper node counts for reporting.

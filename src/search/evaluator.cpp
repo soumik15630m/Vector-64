@@ -22,4 +22,13 @@ int Evaluator::evaluate(const Core::Position &pos) const {
   return (nnueWeight_ * nnueStm + psqtWeight_ * psqtStm) /
          (nnueWeight_ + psqtWeight_);
 }
+
+int Evaluator::evaluate(const Core::Position &pos,
+                        const NNUE::Accumulator &acc) const {
+  const int sign = pos.side_to_move() == Core::WHITE ? 1 : -1;
+  const int psqtStm = sign * pos.psqt_wb();
+  const int nnueStm = net_.evaluate(pos, acc);
+  return (nnueWeight_ * nnueStm + psqtWeight_ * psqtStm) /
+         (nnueWeight_ + psqtWeight_);
+}
 } // namespace Search

@@ -119,6 +119,66 @@ void Network::apply_delta(Core::Color persp, const int *added, int nAdded,
   }
 }
 
+void Network::update(const Accumulator &parent, Accumulator &child,
+                     const Core::Position &after, Core::Move m,
+                     const Core::UndoInfo &ui) const {
+  using namespace Core;
+  const Color mover = ~after.side_to_move(); // side that just moved
+  const Square from = m.from_sq();
+  const Square to = m.to_sq();
+  const bool castling = m.is_castling();
+  const PieceType movedNow = after.piece_on(to); // moved or promoted piece
+  const PieceType removedType = m.is_promotion() ? PAWN : movedNow;
+
+  PieceType capType = NO_PIECE_TYPE;
+  Square capSq = to;
+  if (m.is_capture()) {
+    capType = ui.capturedPiece;
+    if (m.is_en_passant())
+      capSq = make_square(GenFile(file_of(to)), GenRank(rank_of(from)));
+  }
+
+  Square rFrom = SQ_NONE, rTo = SQ_NONE;
+  if (castling) {
+    const GenRank r = GenRank(rank_of(from));
+    rFrom = (to > from) ? make_square(FILE_H, r) : make_square(FILE_A, r);
+    rTo = (to > from) ? make_square(FILE_F, r) : make_square(FILE_D, r);
+  }
+
+  const bool moverKingMoved = (movedNow == KING) || castling;
+
+  for (int pc = WHITE; pc <= BLACK; ++pc) {
+    const Color persp = Color(pc);
+    if (persp == mover && moverKingMoved) {
+      refresh_perspective(after, persp, child);
+      continue;
+    }
+    child.acc[persp] = parent.acc[persp];
+    child.psqt[persp] = parent.psqt[persp];
+
+    const Square ksq = lsb(after.pieces(KING, persp));
+    const HalfKA::Orient o = HalfKA::make_orient(persp, ksq);
+
+    int added[4], removed[4];
+    int na = 0, nr = 0;
+    const auto push = [&](int *arr, int &n, Color c, PieceType t, Square s) {
+      const int f = HalfKA::feature_index(o, c, t, s);
+      if (f >= 0)
+        arr[n++] = f;
+    };
+    push(removed, nr, mover, removedType, from);
+    push(added, na, mover, movedNow, to);
+    if (capType != NO_PIECE_TYPE)
+      push(removed, nr, ~mover, capType, capSq);
+    if (castling) {
+      push(removed, nr, mover, ROOK, rFrom);
+      push(added, na, mover, ROOK, rTo);
+    }
+    apply_delta(persp, added, na, removed, nr, child);
+  }
+  child.computed = true;
+}
+
 int Network::forward(const Accumulator &a, Core::Color stm, int bucket,
                      Probe *probe) const {
   const auto &us = a.acc[stm];
