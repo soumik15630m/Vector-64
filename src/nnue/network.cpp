@@ -66,6 +66,36 @@ int dot(const uint8_t *RESTRICT a, const int8_t *RESTRICT w, int n) {
 #endif
 }
 
+// Add / subtract a feature column into an int16 accumulator. AVX2 wraps mod
+// 2^16 exactly like the scalar path (no saturation), so results are identical.
+inline void acc_add(int16_t *RESTRICT acc, const int16_t *RESTRICT col) {
+#if defined(__AVX2__)
+  for (int h = 0; h < HIDDEN; h += 16)
+    _mm256_storeu_si256(
+        reinterpret_cast<__m256i *>(acc + h),
+        _mm256_add_epi16(
+            _mm256_loadu_si256(reinterpret_cast<const __m256i *>(acc + h)),
+            _mm256_loadu_si256(reinterpret_cast<const __m256i *>(col + h))));
+#else
+  for (int h = 0; h < HIDDEN; ++h)
+    acc[h] = static_cast<int16_t>(acc[h] + col[h]);
+#endif
+}
+
+inline void acc_sub(int16_t *RESTRICT acc, const int16_t *RESTRICT col) {
+#if defined(__AVX2__)
+  for (int h = 0; h < HIDDEN; h += 16)
+    _mm256_storeu_si256(
+        reinterpret_cast<__m256i *>(acc + h),
+        _mm256_sub_epi16(
+            _mm256_loadu_si256(reinterpret_cast<const __m256i *>(acc + h)),
+            _mm256_loadu_si256(reinterpret_cast<const __m256i *>(col + h))));
+#else
+  for (int h = 0; h < HIDDEN; ++h)
+    acc[h] = static_cast<int16_t>(acc[h] - col[h]);
+#endif
+}
+
 } // namespace
 
 int Network::bucket_of(const Core::Position &pos) {
@@ -81,9 +111,7 @@ void Network::refresh_perspective(const Core::Position &pos, Core::Color persp,
   acc = ftBias_;
   pq.fill(0);
   HalfKA::for_each_feature(pos, persp, [&](int f) {
-    const int16_t *col = ft_col(f);
-    for (int h = 0; h < HIDDEN; ++h)
-      acc[h] = static_cast<int16_t>(acc[h] + col[h]);
+    acc_add(acc.data(), ft_col(f));
     const int32_t *pc = ft_psqt(f);
     for (int k = 0; k < PSQT_BUCKETS; ++k)
       pq[k] += pc[k];
@@ -102,17 +130,13 @@ void Network::apply_delta(Core::Color persp, const int *added, int nAdded,
   auto &acc = a.acc[persp];
   auto &pq = a.psqt[persp];
   for (int idx = 0; idx < nAdded; ++idx) {
-    const int16_t *col = ft_col(added[idx]);
-    for (int h = 0; h < HIDDEN; ++h)
-      acc[h] = static_cast<int16_t>(acc[h] + col[h]);
+    acc_add(acc.data(), ft_col(added[idx]));
     const int32_t *pc = ft_psqt(added[idx]);
     for (int k = 0; k < PSQT_BUCKETS; ++k)
       pq[k] += pc[k];
   }
   for (int idx = 0; idx < nRemoved; ++idx) {
-    const int16_t *col = ft_col(removed[idx]);
-    for (int h = 0; h < HIDDEN; ++h)
-      acc[h] = static_cast<int16_t>(acc[h] - col[h]);
+    acc_sub(acc.data(), ft_col(removed[idx]));
     const int32_t *pc = ft_psqt(removed[idx]);
     for (int k = 0; k < PSQT_BUCKETS; ++k)
       pq[k] -= pc[k];
@@ -403,6 +427,28 @@ bool Network::self_test() {
     net->apply_delta(p, s2, n, s1, n, delta); // add s2, remove s1
     if (delta.acc[p] != direct.acc[p] || delta.psqt[p] != direct.psqt[p]) {
       std::fprintf(stderr, "[nnue2] incremental != rebuild, trial %d\n", trial);
+      return false;
+    }
+  }
+
+  // 3) AVX2 accumulator add == scalar reference. The update==rebuild check
+  // above shares the same helper, so verify the SIMD add path independently.
+  {
+    int feats[10];
+    for (int &f : feats)
+      f = static_cast<int>(next() % FEATURES);
+    Accumulator a{};
+    a.acc[Core::WHITE] = net->ftBias_;
+    a.psqt[Core::WHITE].fill(0);
+    net->apply_delta(Core::WHITE, feats, 10, nullptr, 0, a);
+    std::array<int16_t, HIDDEN> ref = net->ftBias_;
+    for (int f : feats) {
+      const int16_t *col = net->ft_col(f);
+      for (int h = 0; h < HIDDEN; ++h)
+        ref[h] = static_cast<int16_t>(ref[h] + col[h]);
+    }
+    if (a.acc[Core::WHITE] != ref) {
+      std::fprintf(stderr, "[nnue2] accumulator SIMD add != scalar\n");
       return false;
     }
   }
