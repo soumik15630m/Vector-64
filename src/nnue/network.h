@@ -12,10 +12,10 @@
 
 // STK-HalfKA NNUE v2 (engine side, from scratch).
 //
-//   features (22528/persp)  --FT-->  accumulator[512]  (int16, incremental)
+//   features (22528/persp)  --FT-->  accumulator[2048]  (int16, incremental)
 //        also  --FT-PSQT-->  psqt[8]  (int32 side-output, one per bucket)
-//   pairwise clipped-ReLU:  512 -> 256   per perspective
-//   L1 (per bucket):  concat(us256, them256)=512 -> 16   int8
+//   pairwise clipped-ReLU:  2048 -> 1024   per perspective
+//   L1 (per bucket):  concat(us1024, them1024)=2048 -> 16   int8
 //   L2 (per bucket):  16 -> 32
 //   out (per bucket): 32 -> 1
 //   eval_stm = out/OUT_SCALE + (psqt_us[b]-psqt_them[b])/PSQT_SCALE
@@ -29,7 +29,7 @@ namespace NNUE {
 
 namespace Arch {
 constexpr int FEATURES = HalfKA::FEATURES; // 22528
-constexpr int HIDDEN = 512;                // accumulator width / perspective
+constexpr int HIDDEN = 2048;               // accumulator width / perspective
 constexpr int PSQT_BUCKETS = 8;
 constexpr int PAIR = HIDDEN / 2; // 256, pairwise outputs / perspective
 constexpr int L1_IN = 2 * PAIR;  // 512, concat(us, them)
