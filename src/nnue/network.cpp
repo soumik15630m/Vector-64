@@ -79,9 +79,23 @@ int dot(const uint8_t *RESTRICT a, const int8_t *RESTRICT w, int n) {
         acc, _mm256_madd_epi16(_mm256_maddubs_epi16(va, vw), ones));
 #endif
   }
-  __m128i lo = _mm256_castsi256_si128(acc);
-  __m128i hi = _mm256_extracti128_si256(acc, 1);
-  __m128i s = _mm_add_epi32(lo, hi);
+  __m128i s = _mm_add_epi32(_mm256_castsi256_si128(acc),
+                            _mm256_extracti128_si256(acc, 1));
+  // 128-bit block for a 16-wide remainder (e.g. the L2 layer's 16 inputs),
+  // which would otherwise fall to the scalar tail.
+  if (i + 16 <= n) {
+    const __m128i va =
+        _mm_loadu_si128(reinterpret_cast<const __m128i *>(a + i));
+    const __m128i vw =
+        _mm_loadu_si128(reinterpret_cast<const __m128i *>(w + i));
+#if defined(__AVXVNNI__)
+    s = _mm_add_epi32(s, _mm_dpbusd_avx_epi32(_mm_setzero_si128(), va, vw));
+#else
+    s = _mm_add_epi32(
+        s, _mm_madd_epi16(_mm_maddubs_epi16(va, vw), _mm_set1_epi16(1)));
+#endif
+    i += 16;
+  }
   s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(2, 3, 0, 1)));
   s = _mm_add_epi32(s, _mm_shuffle_epi32(s, _MM_SHUFFLE(1, 0, 3, 2)));
   int sum = _mm_cvtsi128_si32(s);
