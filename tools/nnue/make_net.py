@@ -6,6 +6,12 @@
 Re-running the same command resumes wherever it stopped (prep line count,
 training epoch/shard, export). Safe to Ctrl-C or lose power at any point.
 
+Hyperparameters follow bullet's canonical recipe (examples/simple.rs): AdamW
+(decay 0.01, weight clipping +/-127/64), lr 1e-3 with x0.1 drops at 45%/90% of
+the run, batch 16384, sigmoid(eval/400) squared-error loss, and ~4B total
+position-visits (e.g. 20 epochs over a 200M-position dataset). WDL blending is
+omitted only because the Lichess eval DB carries no game results.
+
 Training uses the standard NNUE quantization scheme (as in bullet/nnue-pytorch):
 the model is trained in a normalized float domain (activations clipped to
 [0, 1], dense weights clamped to the int8-representable +/-127/64), and the
@@ -236,8 +242,11 @@ def stage_train(args: argparse.Namespace, work: Path, data_dir: Path) -> Path:
 
     device = torch.device(args.device)
     model = STKNet().to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-6)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs, eta_min=args.lr * 0.01)
+    # bullet's canonical recipe (examples/simple.rs): AdamW (decay 0.01, weight
+    # clipping +/-1.98 == our +/-127/64), lr 1e-3 dropping x0.1 at 45% and 90%
+    # of the run (their step 18 of 40 superbatches), batch 16384.
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
+    sched = torch.optim.lr_scheduler.StepLR(opt, step_size=max(1, round(0.45 * args.epochs)), gamma=0.1)
 
     epoch0, shard0, batch = 1, 0, args.batch_size
     if ckpt_path.exists():
@@ -284,7 +293,8 @@ def stage_train(args: argparse.Namespace, work: Path, data_dir: Path) -> Path:
                     bucket = torch.clamp((pieces - 1) // 4, 0, BUCKETS - 1)
                     opt.zero_grad(set_to_none=True)
                     pred = model(w, b, stm, bucket)
-                    loss = torch.mean((torch.tanh(pred / CP_SCALE) - torch.tanh(cp / CP_SCALE)) ** 2)
+                    # bullet loss form: sigmoid(eval/400) squared error.
+                    loss = torch.mean((torch.sigmoid(pred / CP_SCALE) - torch.sigmoid(cp / CP_SCALE)) ** 2)
                     loss.backward()
                     opt.step()
                     model.clip_weights()
@@ -459,7 +469,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description="STK-HalfKA NNUE pipeline (prep/train/export/verify, resumable).")
     p.add_argument("--input", default=None, help=".jsonl(.zst) lichess evals or '<fen> | <cp>' text")
     p.add_argument("--workdir", required=True)
-    p.add_argument("--epochs", type=int, default=30)
+    p.add_argument("--epochs", type=int, default=20, help="20 x 200M ~= bullet's canonical 4B visits")
     p.add_argument("--batch-size", type=int, default=16384)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--shard-size", type=int, default=1_000_000)
