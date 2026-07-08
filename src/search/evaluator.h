@@ -31,8 +31,6 @@ public:
 
 private:
   NNUE::Network net_{};
-  int nnueWeight_ = 8;
-  int psqtWeight_ = 2;
 };
 
 } // namespace Search

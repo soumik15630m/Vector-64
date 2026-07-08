@@ -6,29 +6,23 @@ bool Evaluator::load_nnue(const std::string &path) {
   return net_.load_file(path);
 }
 
+// With a net loaded the score is pure NNUE: the network carries its own
+// PSQT side-output, so blending the hand-written PSQT back in would
+// double-count material and skew the trained evaluation.
 int Evaluator::evaluate(const Core::Position &pos) const {
-  const int sign = pos.side_to_move() == Core::WHITE ? 1 : -1;
-  const int psqtStm = sign * pos.psqt_wb();
-
   if (!net_.is_loaded()) {
-    return sign * pos.material_wb() + psqtStm;
+    const int sign = pos.side_to_move() == Core::WHITE ? 1 : -1;
+    return sign * (pos.material_wb() + pos.psqt_wb());
   }
 
-  // Stage 1: full accumulator rebuild per eval. The incremental accumulator
-  // (search-threaded) replaces this refresh in the next step.
+  // Non-search path (UCI `eval`, fallbacks): rebuild the accumulator here.
   NNUE::Accumulator acc;
   net_.refresh(pos, acc);
-  const int nnueStm = net_.evaluate(pos, acc);
-  return (nnueWeight_ * nnueStm + psqtWeight_ * psqtStm) /
-         (nnueWeight_ + psqtWeight_);
+  return net_.evaluate(pos, acc);
 }
 
 int Evaluator::evaluate(const Core::Position &pos,
                         const NNUE::Accumulator &acc) const {
-  const int sign = pos.side_to_move() == Core::WHITE ? 1 : -1;
-  const int psqtStm = sign * pos.psqt_wb();
-  const int nnueStm = net_.evaluate(pos, acc);
-  return (nnueWeight_ * nnueStm + psqtWeight_ * psqtStm) /
-         (nnueWeight_ + psqtWeight_);
+  return net_.evaluate(pos, acc);
 }
 } // namespace Search

@@ -29,7 +29,7 @@ namespace NNUE {
 
 namespace Arch {
 constexpr int FEATURES = HalfKA::FEATURES; // 22528
-constexpr int HIDDEN = 2048;               // accumulator width / perspective
+constexpr int HIDDEN = 1024;               // accumulator width / perspective
 constexpr int PSQT_BUCKETS = 8;
 constexpr int PAIR = HIDDEN / 2; // 256, pairwise outputs / perspective
 constexpr int L1_IN = 2 * PAIR;  // 512, concat(us, them)
