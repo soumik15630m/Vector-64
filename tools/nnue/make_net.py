@@ -277,8 +277,15 @@ def stage_train(args: argparse.Namespace, work: Path, data_dir: Path) -> Path:
         order = np.random.default_rng(1000 + epoch).permutation(len(shard_files))
         model.train()
         loss_sum, seen, t0 = 0.0, 0, time.time()
-        for si in range(shard0, len(shard_files)):
-            d = load_shard(shard_files[order[si]])
+        si = shard0
+        while si < len(shard_files):
+            # Load a group of --mix-shards shards and shuffle across their
+            # union: the Lichess DB is not randomly ordered, so single-shard
+            # batches are thematically correlated. mix=1 == original behavior.
+            group_end = min(si + args.mix_shards, len(shard_files))
+            loaded = [load_shard(shard_files[order[j]]) for j in range(si, group_end)]
+            d = {k: np.concatenate([x[k] for x in loaded]) for k in loaded[0]}
+            del loaded
             n = d["stm"].shape[0]
             perm = np.random.default_rng(epoch * 100_003 + si).permutation(n)
             pos = 0
@@ -306,7 +313,8 @@ def stage_train(args: argparse.Namespace, work: Path, data_dir: Path) -> Path:
                 pos += len(sel)
                 loss_sum += float(loss.detach()) * len(sel)
                 seen += len(sel)
-            save_ckpt(epoch, si + 1)
+            save_ckpt(epoch, group_end)
+            si = group_end
         sched.step()
         shard0 = 0
         save_ckpt(epoch + 1, 0)
@@ -470,6 +478,7 @@ def main() -> int:
     p.add_argument("--input", default=None, help=".jsonl(.zst) lichess evals or '<fen> | <cp>' text")
     p.add_argument("--workdir", required=True)
     p.add_argument("--epochs", type=int, default=20, help="20 x 200M ~= bullet's canonical 4B visits")
+    p.add_argument("--mix-shards", type=int, default=1, help="shards shuffled together per group (8 recommended)")
     p.add_argument("--batch-size", type=int, default=16384)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--shard-size", type=int, default=1_000_000)
