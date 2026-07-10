@@ -298,10 +298,13 @@ def stage_train(args: argparse.Namespace, work: Path, data_dir: Path) -> Path:
                     cp = torch.from_numpy(d["eval_cp"][sel]).float().to(device)
                     pieces = (w >= 0).sum(dim=1) + 1
                     bucket = torch.clamp((pieces - 1) // 4, 0, BUCKETS - 1)
+                    # eval_cp is white-perspective; the model output is
+                    # side-to-move relative, so flip black-to-move targets.
+                    target = torch.where(stm == 0, cp, -cp)
                     opt.zero_grad(set_to_none=True)
                     pred = model(w, b, stm, bucket)
                     # bullet loss form: sigmoid(eval/400) squared error.
-                    loss = torch.mean((torch.sigmoid(pred / CP_SCALE) - torch.sigmoid(cp / CP_SCALE)) ** 2)
+                    loss = torch.mean((torch.sigmoid(pred / CP_SCALE) - torch.sigmoid(target / CP_SCALE)) ** 2)
                     loss.backward()
                     opt.step()
                     model.clip_weights()
@@ -442,32 +445,42 @@ def stage_verify(args: argparse.Namespace, float_path: Path, net_path: Path) -> 
     model = load_float_model(float_path)
     q = quantize_model(model)
 
+    # Each position is evaluated as-is and colour-mirrored. STK-HalfKA is
+    # colour-symmetric by construction (the mover's features are identical in
+    # the mirrored position), so the two evals must be exactly equal -- this
+    # catches any side-to-move sign bug in training or inference.
+    import chess
+
+    mirrored = [chess.Board(fen).mirror().fen() for fen in BENCH_FENS]
     lines = [f"setoption name EvalFile value {net_path}"]
-    for fen in BENCH_FENS:
-        lines += [f"position fen {fen}", "eval"]
+    for fen, mfen in zip(BENCH_FENS, mirrored, strict=True):
+        lines += [f"position fen {fen}", "eval", f"position fen {mfen}", "eval"]
     lines.append("quit")
     res = subprocess.run(
         [str(engine)], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=120, check=False
     )
     scores = [int(tok.split("score:")[1].split("cp")[0]) for tok in res.stdout.splitlines() if "score:" in tok]
-    if "EvalFile loaded" not in res.stdout or len(scores) != len(BENCH_FENS):
+    if "EvalFile loaded" not in res.stdout or len(scores) != 2 * len(BENCH_FENS):
         raise SystemExit(f"[verify] FAIL: engine did not load/evaluate the net\n{res.stdout[-800:]}")
 
     # Engine must match the integer reference exactly (same math, same ints);
     # the float column is informational (quantization drift).
-    worst = 0
-    for fen, engine_cp in zip(BENCH_FENS, scores, strict=True):
+    worst = mirror_worst = 0
+    for i, fen in enumerate(BENCH_FENS):
+        engine_cp, mirror_cp = scores[2 * i], scores[2 * i + 1]
         int_cp = python_eval_int(q, fen)
         float_cp = python_eval(model, fen)
-        diff = abs(int_cp - engine_cp)
-        worst = max(worst, diff)
+        worst = max(worst, abs(int_cp - engine_cp))
+        mirror_worst = max(mirror_worst, abs(engine_cp - mirror_cp))
         print(
-            f"[verify] engine {engine_cp:6d}  py-int {int_cp:6d}  diff {diff:2d}   "
+            f"[verify] engine {engine_cp:6d}  py-int {int_cp:6d}  mirror {mirror_cp:6d}   "
             f"(float {float_cp:6d})  {fen.split()[0][:20]}"
         )
     if worst > args.tolerance_cp:
         raise SystemExit(f"[verify] FAIL: engine != quantized reference (max diff {worst} cp)")
-    print(f"[verify] PASS: engine == quantized reference (max diff {worst} cp)")
+    if mirror_worst > 0:
+        raise SystemExit(f"[verify] FAIL: colour-mirror asymmetry ({mirror_worst} cp) -- stm sign bug")
+    print(f"[verify] PASS: engine == quantized reference (max diff {worst} cp), mirror-symmetric")
 
 
 # -------------------------------------------------------------------- main
