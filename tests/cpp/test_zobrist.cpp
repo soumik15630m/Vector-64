@@ -143,6 +143,9 @@ int main(int argc, char **argv) {
 
   NNUE::Network net;
   net.randomize(0xACC0FFEEULL);
+  // Shared across all games so cache entries go stale and get diffed, which
+  // is exactly the path that must still equal a full rebuild.
+  auto refreshTable = std::make_unique<NNUE::RefreshTable>();
 
   for (int game = 0; game < GAMES; ++game) {
     Position pos;
@@ -192,7 +195,7 @@ int main(int argc, char **argv) {
       pos.make_move(move, undo);
 
       NNUE::Accumulator child;
-      net.update(acc, child, pos, move, undo);
+      net.update(acc, child, pos, move, undo, refreshTable.get());
       NNUE::Accumulator fresh;
       net.refresh(pos, fresh);
       if (child.acc != fresh.acc || child.psqt != fresh.psqt) {

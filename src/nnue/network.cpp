@@ -168,6 +168,64 @@ void Network::refresh(const Core::Position &pos, Accumulator &a) const {
   a.computed = true;
 }
 
+void Network::refresh_perspective(const Core::Position &pos, Core::Color persp,
+                                  Accumulator &a, RefreshTable &table) const {
+  using namespace Core;
+  const Square ksq = lsb(pos.pieces(KING, persp));
+  RefreshTable::Entry &e = table.entries[persp][ksq];
+  const HalfKA::Orient o = HalfKA::make_orient(persp, ksq);
+
+  if (!e.valid) {
+    e.acc = ftBias_;
+    e.psqt.fill(0);
+    HalfKA::for_each_feature(pos, persp, [&](int f) {
+      acc_add(e.acc.data(), ft_col(f));
+      const int32_t *pc = ft_psqt(f);
+      for (int k = 0; k < PSQT_BUCKETS; ++k)
+        e.psqt[k] += pc[k];
+    });
+  } else {
+    // Diff the cached placement against the current one; both were built
+    // with the same king square, so the orientation is identical.
+    for (int c = WHITE; c <= BLACK; ++c) {
+      for (int pt = PAWN; pt <= KING; ++pt) {
+        const Bitboard cur = pos.pieces(PieceType(pt), Color(c));
+        const Bitboard old = e.pieces[c][pt];
+        Bitboard removed = old & ~cur;
+        Bitboard added = cur & ~old;
+        while (removed) {
+          const int f = HalfKA::feature_index(o, Color(c), PieceType(pt),
+                                              pop_lsb(removed));
+          if (f < 0)
+            continue;
+          acc_sub(e.acc.data(), ft_col(f));
+          const int32_t *pc = ft_psqt(f);
+          for (int k = 0; k < PSQT_BUCKETS; ++k)
+            e.psqt[k] -= pc[k];
+        }
+        while (added) {
+          const int f =
+              HalfKA::feature_index(o, Color(c), PieceType(pt), pop_lsb(added));
+          if (f < 0)
+            continue;
+          acc_add(e.acc.data(), ft_col(f));
+          const int32_t *pc = ft_psqt(f);
+          for (int k = 0; k < PSQT_BUCKETS; ++k)
+            e.psqt[k] += pc[k];
+        }
+      }
+    }
+  }
+
+  for (int c = WHITE; c <= BLACK; ++c)
+    for (int pt = PAWN; pt <= KING; ++pt)
+      e.pieces[c][pt] = pos.pieces(PieceType(pt), Color(c));
+  e.valid = true;
+
+  a.acc[persp] = e.acc;
+  a.psqt[persp] = e.psqt;
+}
+
 void Network::apply_delta(Core::Color persp, const int *added, int nAdded,
                           const int *removed, int nRemoved,
                           Accumulator &a) const {
@@ -189,7 +247,7 @@ void Network::apply_delta(Core::Color persp, const int *added, int nAdded,
 
 void Network::update(const Accumulator &parent, Accumulator &child,
                      const Core::Position &after, Core::Move m,
-                     const Core::UndoInfo &ui) const {
+                     const Core::UndoInfo &ui, RefreshTable *table) const {
   using namespace Core;
   const Color mover = ~after.side_to_move(); // side that just moved
   const Square from = m.from_sq();
@@ -218,7 +276,10 @@ void Network::update(const Accumulator &parent, Accumulator &child,
   for (int pc = WHITE; pc <= BLACK; ++pc) {
     const Color persp = Color(pc);
     if (persp == mover && moverKingMoved) {
-      refresh_perspective(after, persp, child);
+      if (table)
+        refresh_perspective(after, persp, child, *table);
+      else
+        refresh_perspective(after, persp, child);
       continue;
     }
     child.acc[persp] = parent.acc[persp];

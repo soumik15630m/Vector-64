@@ -240,12 +240,14 @@ private:
 EngineSearch::EngineSearch(size_t hashMb)
     : hashMb_(hashMb), ownTt_(hashMb), tt_(&ownTt_), eval_(&evaluator_) {
   accStack_.resize(MAX_PLY + 2);
+  refreshTable_ = std::make_unique<NNUE::RefreshTable>();
 }
 
 EngineSearch::EngineSearch(TranspositionTable *sharedTt,
                            const Evaluator *sharedEval)
     : hashMb_(1), ownTt_(1), tt_(sharedTt), eval_(sharedEval) {
   accStack_.resize(MAX_PLY + 2);
+  refreshTable_ = std::make_unique<NNUE::RefreshTable>();
 }
 
 void EngineSearch::set_hash_mb(size_t hashMb) {
@@ -405,7 +407,8 @@ HOT_FN int EngineSearch::quiescence(Core::Position &pos, int alpha, int beta,
     Core::UndoInfo undo{};
     pos.make_move(move, undo);
     if (nnueActive_)
-      eval_->nnue_update(accStack_[ply], accStack_[ply + 1], pos, move, undo);
+      eval_->nnue_update(accStack_[ply], accStack_[ply + 1], pos, move, undo,
+                         refreshTable_.get());
     const int score =
         -quiescence(pos, -beta, -alpha, ply + 1, limits, callbacks);
     pos.unmake_move(move, undo);
@@ -558,7 +561,8 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     Core::UndoInfo undo{};
     pos.make_move(move, undo);
     if (nnueActive_)
-      eval_->nnue_update(accStack_[ply], accStack_[ply + 1], pos, move, undo);
+      eval_->nnue_update(accStack_[ply], accStack_[ply + 1], pos, move, undo,
+                         refreshTable_.get());
 
     const int newDepth = depth - 1 + extension;
     int score;
@@ -665,7 +669,8 @@ int EngineSearch::search_root(Core::Position &root, Core::MoveList &rootMoves,
     Core::UndoInfo undo{};
     root.make_move(move, undo);
     if (nnueActive_)
-      eval_->nnue_update(accStack_[0], accStack_[1], root, move, undo);
+      eval_->nnue_update(accStack_[0], accStack_[1], root, move, undo,
+                         refreshTable_.get());
 
     const int newDepth = depth - 1 + extension;
     int score;

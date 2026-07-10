@@ -50,6 +50,20 @@ struct alignas(64) Accumulator {
   bool computed = false;
 };
 
+// Per-thread cache of one accumulator half per (perspective, king square).
+// A king move normally forces a full rebuild of the mover's perspective; with
+// the cache it becomes a diff against the accumulator last built for that
+// king square -- usually a handful of feature updates ("finny tables").
+struct RefreshTable {
+  struct Entry {
+    alignas(64) std::array<int16_t, Arch::HIDDEN> acc{};
+    std::array<int32_t, Arch::PSQT_BUCKETS> psqt{};
+    Core::Bitboard pieces[Core::COLOR_NB][Core::PIECE_TYPE_NB] = {};
+    bool valid = false;
+  };
+  std::array<std::array<Entry, Core::SQUARE_NB>, Core::COLOR_NB> entries{};
+};
+
 // Dense weights for one output bucket.
 struct Bucket {
   std::array<int8_t, Arch::L1 * Arch::L1_IN> l1w{};
@@ -83,6 +97,9 @@ public:
   // Refresh a single perspective (used after that side's king moves).
   void refresh_perspective(const Core::Position &pos, Core::Color persp,
                            Accumulator &a) const;
+  // Same, but diffed against the cached accumulator for this king square.
+  void refresh_perspective(const Core::Position &pos, Core::Color persp,
+                           Accumulator &a, RefreshTable &table) const;
 
   // Incremental primitive: apply added/removed features to one perspective.
   void apply_delta(Core::Color persp, const int *added, int nAdded,
@@ -90,11 +107,12 @@ public:
 
   // Derive `child` from `parent` for the move `m` (already played, so `after`
   // is the resulting position and `ui` carries the captured piece). A
-  // perspective is refreshed only when its own king moved; otherwise the few
-  // changed features are applied incrementally.
+  // perspective is refreshed only when its own king moved -- via the cache
+  // when `table` is given; otherwise the few changed features are applied
+  // incrementally.
   void update(const Accumulator &parent, Accumulator &child,
               const Core::Position &after, Core::Move m,
-              const Core::UndoInfo &ui) const;
+              const Core::UndoInfo &ui, RefreshTable *table = nullptr) const;
 
   // Side-to-move centipawn evaluation from a built accumulator.
   int evaluate(const Core::Position &pos, const Accumulator &a) const;

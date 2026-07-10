@@ -25,8 +25,8 @@ public:
   }
   void nnue_update(const NNUE::Accumulator &parent, NNUE::Accumulator &child,
                    const Core::Position &after, Core::Move m,
-                   const Core::UndoInfo &ui) const {
-    net_.update(parent, child, after, m, ui);
+                   const Core::UndoInfo &ui, NNUE::RefreshTable *table) const {
+    net_.update(parent, child, after, m, ui, table);
   }
 
 private:

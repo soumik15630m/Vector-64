@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -110,9 +111,11 @@ private:
   Evaluator evaluator_;
   const Evaluator *eval_; // evaluator_, or the master's on helpers
 
-  // Per-thread NNUE accumulator stack, indexed by ply. Active only while a net
-  // is loaded; the classical path never touches it.
+  // Per-thread NNUE accumulator stack, indexed by ply, plus the king-square
+  // refresh cache. Active only while a net is loaded; the classical path
+  // never touches them.
   std::vector<NNUE::Accumulator> accStack_;
+  std::unique_ptr<NNUE::RefreshTable> refreshTable_;
   bool nnueActive_ = false;
 
   // Live only while a multi-threaded search runs; lets the master
