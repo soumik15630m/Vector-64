@@ -55,6 +55,7 @@ public:
   void set_threads(int threads);
   void clear();
   bool load_nnue(const std::string &path);
+  bool load_nnue_small(const std::string &path);
   int evaluate(const Core::Position &pos);
 
   size_t hash_mb() const { return hashMb_; }
@@ -116,7 +117,10 @@ private:
   // never touches them.
   std::vector<NNUE::Accumulator> accStack_;
   std::unique_ptr<NNUE::RefreshTable> refreshTable_;
+  std::vector<NNUE::SmallAccumulator> smallAccStack_;
+  std::unique_ptr<NNUE::SmallRefreshTable> smallRefreshTable_;
   bool nnueActive_ = false;
+  bool smallActive_ = false;
 
   // Live only while a multi-threaded search runs; lets the master
   // aggregate helper node counts for reporting.

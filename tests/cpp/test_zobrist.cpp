@@ -8,6 +8,7 @@
 #include "nnue/network.h"
 
 #include <cstdio>
+#include <memory>
 #include <random>
 
 using namespace Core;
@@ -127,12 +128,12 @@ int main(int argc, char **argv) {
   const bool runGames = (which == "all" || which == "games");
 
   if (runNnue) {
-    if (!NNUE::Network::self_test()) {
+    if (!NNUE::Network::self_test() || !NNUE::SmallNetwork::self_test()) {
       std::printf("FAIL: NNUE inference/accumulator self-test failed\n");
       return 1;
     }
     std::printf("PASS: NNUE inference bit-exact (SIMD == scalar) and "
-                "incremental == rebuild\n");
+                "incremental == rebuild, H=1024 and H=128\n");
   }
   if (!runGames)
     return 0;

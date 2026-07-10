@@ -49,6 +49,7 @@ import build_stk_data as prep  # noqa: E402
 import halfka_features as hk  # noqa: E402
 
 FEATURES = 22528
+# Set from --hidden in main(): 1024 = primary net, 128 = dual-net small net.
 HIDDEN = 1024
 PAIR = HIDDEN // 2
 L1 = 16
@@ -366,7 +367,7 @@ def load_float_model(float_path: Path) -> STKNet:
 
 
 def stage_export(work: Path, float_path: Path) -> Path:
-    out = work / "stk_halfka_1024.nnue"
+    out = work / f"stk_halfka_{HIDDEN}.nnue"
     q = quantize_model(load_float_model(float_path))
     with out.open("wb") as fh:
         fh.write(struct.pack("<9sIIII", b"STKHALFKA", 1, FEATURES, HIDDEN, BUCKETS))
@@ -452,7 +453,8 @@ def stage_verify(args: argparse.Namespace, float_path: Path, net_path: Path) -> 
     import chess
 
     mirrored = [chess.Board(fen).mirror().fen() for fen in BENCH_FENS]
-    lines = [f"setoption name EvalFile value {net_path}"]
+    option = "EvalFile" if HIDDEN == 1024 else "EvalFileSmall"
+    lines = [f"setoption name {option} value {net_path}"]
     for fen, mfen in zip(BENCH_FENS, mirrored, strict=True):
         lines += [f"position fen {fen}", "eval", f"position fen {mfen}", "eval"]
     lines.append("quit")
@@ -460,7 +462,7 @@ def stage_verify(args: argparse.Namespace, float_path: Path, net_path: Path) -> 
         [str(engine)], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=120, check=False
     )
     scores = [int(tok.split("score:")[1].split("cp")[0]) for tok in res.stdout.splitlines() if "score:" in tok]
-    if "EvalFile loaded" not in res.stdout or len(scores) != 2 * len(BENCH_FENS):
+    if f"{option} loaded" not in res.stdout or len(scores) != 2 * len(BENCH_FENS):
         raise SystemExit(f"[verify] FAIL: engine did not load/evaluate the net\n{res.stdout[-800:]}")
 
     # Engine must match the integer reference exactly (same math, same ints);
@@ -491,6 +493,7 @@ def main() -> int:
     p.add_argument("--input", default=None, help=".jsonl(.zst) lichess evals or '<fen> | <cp>' text")
     p.add_argument("--workdir", required=True)
     p.add_argument("--epochs", type=int, default=20, help="20 x 200M ~= bullet's canonical 4B visits")
+    p.add_argument("--hidden", type=int, default=1024, choices=(1024, 128), help="net width (128 = small net)")
     p.add_argument("--mix-shards", type=int, default=1, help="shards shuffled together per group (8 recommended)")
     p.add_argument("--batch-size", type=int, default=16384)
     p.add_argument("--lr", type=float, default=1e-3)
@@ -502,6 +505,10 @@ def main() -> int:
     p.add_argument("--engine", default=None, help="ChessEngine binary for the parity check")
     p.add_argument("--tolerance-cp", type=int, default=1)
     args = p.parse_args()
+
+    global HIDDEN, PAIR
+    HIDDEN = args.hidden
+    PAIR = HIDDEN // 2
 
     work = Path(args.workdir)
     work.mkdir(parents=True, exist_ok=True)

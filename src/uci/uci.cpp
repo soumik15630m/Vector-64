@@ -250,6 +250,7 @@ private:
     emit("option name Move Overhead type spin default " +
          std::to_string(moveOverheadMs_) + " min 0 max 500");
     emit("option name EvalFile type string default <empty>");
+    emit("option name EvalFileSmall type string default <empty>");
     emit("uciok");
   }
 
@@ -325,6 +326,26 @@ private:
         emit("info string EvalFile loaded: " + path);
       } else {
         emit("info string EvalFile load failed: " + path);
+      }
+      return;
+    }
+
+    if (name == "evalfilesmall") {
+      std::string path = value;
+      if (path.size() >= 2 && path.front() == '"' && path.back() == '"') {
+        path = path.substr(1, path.size() - 2);
+      }
+
+      if (path.empty() || to_lower(path) == "<empty>") {
+        emit("info string EvalFileSmall ignored: empty path");
+        return;
+      }
+
+      stop_and_join(true);
+      if (search_.load_nnue_small(path)) {
+        emit("info string EvalFileSmall loaded: " + path);
+      } else {
+        emit("info string EvalFileSmall load failed: " + path);
       }
       return;
     }
