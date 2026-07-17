@@ -1,6 +1,6 @@
 # Developer tooling for the Python training/export utilities (tools/).
 # Runtime training deps are in requirements.txt.
 ruff>=0.15,<0.16
-mypy>=1.19,<2
+mypy>=2.3.0,<3
 pytest>=8,<9
 chess>=1.10
