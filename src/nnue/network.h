@@ -202,6 +202,119 @@ inline void acc_add(int16_t *RESTRICT acc, const int16_t *RESTRICT col) {
 #endif
 }
 
+// Fused child = parent + sum(adds) - sum(subs) in one pass over the
+// accumulator, instead of copy + per-column add/sub passes. int16 wrap
+// arithmetic is order-independent, so this is bit-identical to the
+// sequential form.
+template <int H>
+inline void acc_fused(int16_t *RESTRICT dst, const int16_t *RESTRICT src,
+                      const int16_t *const *adds, int na,
+                      const int16_t *const *subs, int nr) {
+#if defined(__AVX2__)
+  for (int h = 0; h < H; h += 16) {
+    __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(src + h));
+    for (int j = 0; j < na; ++j)
+      v = _mm256_add_epi16(
+          v,
+          _mm256_loadu_si256(reinterpret_cast<const __m256i *>(adds[j] + h)));
+    for (int j = 0; j < nr; ++j)
+      v = _mm256_sub_epi16(
+          v,
+          _mm256_loadu_si256(reinterpret_cast<const __m256i *>(subs[j] + h)));
+    _mm256_storeu_si256(reinterpret_cast<__m256i *>(dst + h), v);
+  }
+#elif defined(__ARM_NEON)
+  for (int h = 0; h < H; h += 8) {
+    int16x8_t v = vld1q_s16(src + h);
+    for (int j = 0; j < na; ++j)
+      v = vaddq_s16(v, vld1q_s16(adds[j] + h));
+    for (int j = 0; j < nr; ++j)
+      v = vsubq_s16(v, vld1q_s16(subs[j] + h));
+    vst1q_s16(dst + h, v);
+  }
+#else
+  for (int h = 0; h < H; ++h) {
+    int v = src[h];
+    for (int j = 0; j < na; ++j)
+      v += adds[j][h];
+    for (int j = 0; j < nr; ++j)
+      v -= subs[j][h];
+    dst[h] = static_cast<int16_t>(v);
+  }
+#endif
+}
+
+#if defined(__AVX2__)
+// Four dot products sharing every activation load: rows w, w+stride,
+// w+2*stride, w+3*stride against the same uint8 vector. Sums are exact
+// int32 (max |sum| ~= n * 127 * 127 << 2^31), so accumulation order is
+// irrelevant and results equal four scalar dot() calls exactly.
+inline __m128i dot4(const uint8_t *RESTRICT a, const int8_t *RESTRICT w,
+                    size_t stride, int n) {
+  __m256i acc0 = _mm256_setzero_si256();
+  __m256i acc1 = _mm256_setzero_si256();
+  __m256i acc2 = _mm256_setzero_si256();
+  __m256i acc3 = _mm256_setzero_si256();
+#if !defined(__AVXVNNI__)
+  const __m256i ones = _mm256_set1_epi16(1);
+#endif
+  for (int i = 0; i + 32 <= n; i += 32) {
+    const __m256i va =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i *>(a + i));
+    const __m256i w0 =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i *>(w + i));
+    const __m256i w1 =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i *>(w + stride + i));
+    const __m256i w2 = _mm256_loadu_si256(
+        reinterpret_cast<const __m256i *>(w + 2 * stride + i));
+    const __m256i w3 = _mm256_loadu_si256(
+        reinterpret_cast<const __m256i *>(w + 3 * stride + i));
+#if defined(__AVXVNNI__)
+    acc0 = _mm256_dpbusd_avx_epi32(acc0, va, w0);
+    acc1 = _mm256_dpbusd_avx_epi32(acc1, va, w1);
+    acc2 = _mm256_dpbusd_avx_epi32(acc2, va, w2);
+    acc3 = _mm256_dpbusd_avx_epi32(acc3, va, w3);
+#else
+    acc0 = _mm256_add_epi32(
+        acc0, _mm256_madd_epi16(_mm256_maddubs_epi16(va, w0), ones));
+    acc1 = _mm256_add_epi32(
+        acc1, _mm256_madd_epi16(_mm256_maddubs_epi16(va, w1), ones));
+    acc2 = _mm256_add_epi32(
+        acc2, _mm256_madd_epi16(_mm256_maddubs_epi16(va, w2), ones));
+    acc3 = _mm256_add_epi32(
+        acc3, _mm256_madd_epi16(_mm256_maddubs_epi16(va, w3), ones));
+#endif
+  }
+  // Reduce four 8-lane accumulators to one vector of four sums.
+  const __m256i r01 = _mm256_hadd_epi32(acc0, acc1);
+  const __m256i r23 = _mm256_hadd_epi32(acc2, acc3);
+  const __m256i r = _mm256_hadd_epi32(r01, r23);
+  return _mm_add_epi32(_mm256_castsi256_si128(r),
+                       _mm256_extracti128_si256(r, 1));
+}
+#endif
+
+#if defined(__AVX2__)
+// 128-bit four-row variant for the 16-wide L2 layer: one activation load
+// shared by four rows, one combined reduction (exact int32 sums).
+inline __m128i dot4x16(const uint8_t *RESTRICT a, const int8_t *RESTRICT w,
+                       size_t stride) {
+  const __m128i va = _mm_loadu_si128(reinterpret_cast<const __m128i *>(a));
+  const auto row = [&](size_t j) {
+    const __m128i vw =
+        _mm_loadu_si128(reinterpret_cast<const __m128i *>(w + j * stride));
+#if defined(__AVXVNNI__)
+    return _mm_dpbusd_avx_epi32(_mm_setzero_si128(), va, vw);
+#else
+    return _mm_madd_epi16(_mm_maddubs_epi16(va, vw), _mm_set1_epi16(1));
+#endif
+  };
+  const __m128i r01 = _mm_hadd_epi32(row(0), row(1));
+  const __m128i r23 = _mm_hadd_epi32(row(2), row(3));
+  return _mm_hadd_epi32(r01, r23);
+}
+#endif
+
 template <int H>
 inline void acc_sub(int16_t *RESTRICT acc, const int16_t *RESTRICT col) {
 #if defined(__AVX2__)
@@ -505,9 +618,35 @@ public:
         else
           refresh_perspective(after, persp, child);
       } else {
-        child.acc[persp] = parent.acc[persp];
-        child.psqt[persp] = parent.psqt[persp];
-        apply_dirty(persp, lsb(after.pieces(KING, persp)), dm, child);
+        // Fused child = parent + adds - subs, one pass over the accumulator.
+        const HalfKA::Orient o =
+            HalfKA::make_orient(persp, lsb(after.pieces(KING, persp)));
+        const int16_t *adds[2];
+        const int16_t *subs[2];
+        int32_t psqtDelta[Arch::PSQT_BUCKETS] = {};
+        int na = 0, nr = 0;
+        const auto push = [&](const int16_t **arr, int &n, int sign, Color c,
+                              PieceType t, Square s) {
+          const int f = HalfKA::feature_index(o, c, t, s);
+          if (f < 0)
+            return;
+          arr[n++] = ft_col(f);
+          const int32_t *pc = ft_psqt(f);
+          for (int k = 0; k < Arch::PSQT_BUCKETS; ++k)
+            psqtDelta[k] += sign * pc[k];
+        };
+        push(subs, nr, -1, dm.mover, dm.removedType, dm.from);
+        push(adds, na, +1, dm.mover, dm.movedNow, dm.to);
+        if (dm.capType != NO_PIECE_TYPE)
+          push(subs, nr, -1, ~dm.mover, dm.capType, dm.capSq);
+        if (dm.rookFrom != SQ_NONE) {
+          push(subs, nr, -1, dm.mover, ROOK, dm.rookFrom);
+          push(adds, na, +1, dm.mover, ROOK, dm.rookTo);
+        }
+        detail::acc_fused<H>(child.acc[persp].data(), parent.acc[persp].data(),
+                             adds, na, subs, nr);
+        for (int k = 0; k < Arch::PSQT_BUCKETS; ++k)
+          child.psqt[persp][k] = parent.psqt[persp][k] + psqtDelta[k];
       }
       child.computed[persp] = true;
     }
@@ -575,24 +714,49 @@ private:
     const auto &us = a.acc[stm];
     const auto &them = a.acc[~stm];
 
-    alignas(32) std::array<uint8_t, H> l1in{};
+    // Deliberately uninitialized: pairwise/the layer loops write every byte,
+    // and value-init here would memset ~1KB per eval.
+    alignas(32) std::array<uint8_t, H> l1in;
     detail::pairwise<H>(us.data(), l1in.data());
     detail::pairwise<H>(them.data(), l1in.data() + PAIR);
 
     const Bucket &b = buckets_[bucket];
 
-    alignas(32) std::array<uint8_t, Arch::L1> l1o{};
+    alignas(32) std::array<uint8_t, Arch::L1> l1o;
+#if defined(__AVX2__)
+    // Four output rows per pass share every activation load (H is a
+    // multiple of 32, so dot4 needs no tail).
+    for (int o = 0; o < Arch::L1; o += 4) {
+      alignas(16) int32_t sums[4];
+      _mm_store_si128(reinterpret_cast<__m128i *>(sums),
+                      detail::dot4(l1in.data(), &b.l1w[o * H], H, H));
+      for (int j = 0; j < 4; ++j)
+        l1o[o + j] = detail::clip((b.l1b[o + j] + sums[j]) >> Arch::L1_SHIFT);
+    }
+#else
     for (int o = 0; o < Arch::L1; ++o) {
       const int s = b.l1b[o] + detail::dot(l1in.data(), &b.l1w[o * H], H);
       l1o[o] = detail::clip(s >> Arch::L1_SHIFT);
     }
+#endif
 
-    alignas(32) std::array<uint8_t, Arch::L2> l2o{};
+    alignas(32) std::array<uint8_t, Arch::L2> l2o;
+#if defined(__AVX2__)
+    for (int o = 0; o < Arch::L2; o += 4) {
+      alignas(16) int32_t sums[4];
+      _mm_store_si128(
+          reinterpret_cast<__m128i *>(sums),
+          detail::dot4x16(l1o.data(), &b.l2w[o * Arch::L1], Arch::L1));
+      for (int j = 0; j < 4; ++j)
+        l2o[o + j] = detail::clip((b.l2b[o + j] + sums[j]) >> Arch::L2_SHIFT);
+    }
+#else
     for (int o = 0; o < Arch::L2; ++o) {
       const int s =
           b.l2b[o] + detail::dot(l1o.data(), &b.l2w[o * Arch::L1], Arch::L1);
       l2o[o] = detail::clip(s >> Arch::L2_SHIFT);
     }
+#endif
 
     const int raw = b.outb + detail::dot(l2o.data(), b.outw.data(), Arch::L2);
     const int positional = raw >> Arch::OUT_SHIFT;
