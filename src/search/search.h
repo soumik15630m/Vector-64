@@ -77,8 +77,11 @@ private:
   bool check_stop(const Limits &limits, const Callbacks &callbacks);
   void update_pv(int ply, Core::Move move);
 
-  // Evaluate `pos` at `ply`, using the incrementally maintained accumulator
-  // when a net is loaded, else the classical path.
+  // Evaluate `pos` at `ply` from the eagerly maintained big accumulator.
+  // When the small net is loaded and the O(1) material+psqt estimate calls
+  // the position clearly decided, the small net answers on demand instead
+  // (a finny-cached refresh; no per-make maintenance), skipping the big
+  // forward entirely at that node.
   int eval_pos(const Core::Position &pos, int ply);
 
   int negamax(Core::Position &pos, int depth, int alpha, int beta, int ply,
@@ -117,7 +120,7 @@ private:
   // never touches them.
   std::vector<NNUE::Accumulator> accStack_;
   std::unique_ptr<NNUE::RefreshTable> refreshTable_;
-  std::vector<NNUE::SmallAccumulator> smallAccStack_;
+  NNUE::SmallAccumulator smallScratch_;
   std::unique_ptr<NNUE::SmallRefreshTable> smallRefreshTable_;
   bool nnueActive_ = false;
   bool smallActive_ = false;

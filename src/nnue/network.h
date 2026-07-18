@@ -604,6 +604,47 @@ public:
   // Derive `child` from `parent` for the just-played move `m`. A perspective
   // is refreshed only when its own king moved -- via the cache when `table`
   // is given; otherwise the few changed features are applied incrementally.
+  // Fused single step: child = parent + adds - subs in one pass over the
+  // accumulator half. Only valid when persp's king did not move in dm (the
+  // orientation for ksq must hold across the step).
+  void apply_dirty_fused(Core::Color persp, Core::Square ksq,
+                         const DirtyMove &dm, const AccumulatorT<H> &parent,
+                         AccumulatorT<H> &child) const {
+    using namespace Core;
+    if (dm.isNull) {
+      child.acc[persp] = parent.acc[persp];
+      child.psqt[persp] = parent.psqt[persp];
+      return;
+    }
+    const HalfKA::Orient o = HalfKA::make_orient(persp, ksq);
+    const int16_t *adds[2];
+    const int16_t *subs[2];
+    int32_t psqtDelta[Arch::PSQT_BUCKETS] = {};
+    int na = 0, nr = 0;
+    const auto push = [&](const int16_t **arr, int &n, int sign, Color c,
+                          PieceType t, Square s) {
+      const int f = HalfKA::feature_index(o, c, t, s);
+      if (f < 0)
+        return;
+      arr[n++] = ft_col(f);
+      const int32_t *pc = ft_psqt(f);
+      for (int k = 0; k < Arch::PSQT_BUCKETS; ++k)
+        psqtDelta[k] += sign * pc[k];
+    };
+    push(subs, nr, -1, dm.mover, dm.removedType, dm.from);
+    push(adds, na, +1, dm.mover, dm.movedNow, dm.to);
+    if (dm.capType != NO_PIECE_TYPE)
+      push(subs, nr, -1, ~dm.mover, dm.capType, dm.capSq);
+    if (dm.rookFrom != SQ_NONE) {
+      push(subs, nr, -1, dm.mover, ROOK, dm.rookFrom);
+      push(adds, na, +1, dm.mover, ROOK, dm.rookTo);
+    }
+    detail::acc_fused<H>(child.acc[persp].data(), parent.acc[persp].data(),
+                         adds, na, subs, nr);
+    for (int k = 0; k < Arch::PSQT_BUCKETS; ++k)
+      child.psqt[persp][k] = parent.psqt[persp][k] + psqtDelta[k];
+  }
+
   void update(const AccumulatorT<H> &parent, AccumulatorT<H> &child,
               const Core::Position &after, Core::Move m,
               const Core::UndoInfo &ui,
@@ -618,35 +659,8 @@ public:
         else
           refresh_perspective(after, persp, child);
       } else {
-        // Fused child = parent + adds - subs, one pass over the accumulator.
-        const HalfKA::Orient o =
-            HalfKA::make_orient(persp, lsb(after.pieces(KING, persp)));
-        const int16_t *adds[2];
-        const int16_t *subs[2];
-        int32_t psqtDelta[Arch::PSQT_BUCKETS] = {};
-        int na = 0, nr = 0;
-        const auto push = [&](const int16_t **arr, int &n, int sign, Color c,
-                              PieceType t, Square s) {
-          const int f = HalfKA::feature_index(o, c, t, s);
-          if (f < 0)
-            return;
-          arr[n++] = ft_col(f);
-          const int32_t *pc = ft_psqt(f);
-          for (int k = 0; k < Arch::PSQT_BUCKETS; ++k)
-            psqtDelta[k] += sign * pc[k];
-        };
-        push(subs, nr, -1, dm.mover, dm.removedType, dm.from);
-        push(adds, na, +1, dm.mover, dm.movedNow, dm.to);
-        if (dm.capType != NO_PIECE_TYPE)
-          push(subs, nr, -1, ~dm.mover, dm.capType, dm.capSq);
-        if (dm.rookFrom != SQ_NONE) {
-          push(subs, nr, -1, dm.mover, ROOK, dm.rookFrom);
-          push(adds, na, +1, dm.mover, ROOK, dm.rookTo);
-        }
-        detail::acc_fused<H>(child.acc[persp].data(), parent.acc[persp].data(),
-                             adds, na, subs, nr);
-        for (int k = 0; k < Arch::PSQT_BUCKETS; ++k)
-          child.psqt[persp][k] = parent.psqt[persp][k] + psqtDelta[k];
+        apply_dirty_fused(persp, lsb(after.pieces(KING, persp)), dm, parent,
+                          child);
       }
       child.computed[persp] = true;
     }

@@ -241,7 +241,6 @@ EngineSearch::EngineSearch(size_t hashMb)
     : hashMb_(hashMb), ownTt_(hashMb), tt_(&ownTt_), eval_(&evaluator_) {
   accStack_.resize(MAX_PLY + 2);
   refreshTable_ = std::make_unique<NNUE::RefreshTable>();
-  smallAccStack_.resize(MAX_PLY + 2);
   smallRefreshTable_ = std::make_unique<NNUE::SmallRefreshTable>();
 }
 
@@ -250,7 +249,6 @@ EngineSearch::EngineSearch(TranspositionTable *sharedTt,
     : hashMb_(1), ownTt_(1), tt_(sharedTt), eval_(sharedEval) {
   accStack_.resize(MAX_PLY + 2);
   refreshTable_ = std::make_unique<NNUE::RefreshTable>();
-  smallAccStack_.resize(MAX_PLY + 2);
   smallRefreshTable_ = std::make_unique<NNUE::SmallRefreshTable>();
 }
 
@@ -292,8 +290,15 @@ int EngineSearch::eval_pos(const Core::Position &pos, int ply) {
     if (smallActive_) {
       const int sign = pos.side_to_move() == Core::WHITE ? 1 : -1;
       const int simple = sign * (pos.material_wb() + pos.psqt_wb());
-      if (simple > SMALL_NET_THRESHOLD || simple < -SMALL_NET_THRESHOLD)
-        return eval_->small().evaluate(pos, smallAccStack_[ply]);
+      if (simple > SMALL_NET_THRESHOLD || simple < -SMALL_NET_THRESHOLD) {
+        // On-demand small eval: a couple of finny diffs, and the big
+        // accumulator stays unresolved for this whole subtree branch.
+        eval_->small().refresh_perspective(pos, Core::WHITE, smallScratch_,
+                                           *smallRefreshTable_);
+        eval_->small().refresh_perspective(pos, Core::BLACK, smallScratch_,
+                                           *smallRefreshTable_);
+        return eval_->small().evaluate(pos, smallScratch_);
+      }
     }
     return eval_->evaluate(pos, accStack_[ply]);
   }
@@ -428,13 +433,9 @@ HOT_FN int EngineSearch::quiescence(Core::Position &pos, int alpha, int beta,
     tt_->prefetch(pos.key_after(move));
     Core::UndoInfo undo{};
     pos.make_move(move, undo);
-    if (nnueActive_) {
+    if (nnueActive_)
       eval_->big().update(accStack_[ply], accStack_[ply + 1], pos, move, undo,
                           refreshTable_.get());
-      if (smallActive_)
-        eval_->small().update(smallAccStack_[ply], smallAccStack_[ply + 1], pos,
-                              move, undo, smallRefreshTable_.get());
-    }
     const int score =
         -quiescence(pos, -beta, -alpha, ply + 1, limits, callbacks);
     pos.unmake_move(move, undo);
@@ -547,11 +548,8 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
 
     Core::UndoInfo undo;
     pos.make_null_move(undo);
-    if (nnueActive_) {
+    if (nnueActive_)
       accStack_[ply + 1] = accStack_[ply]; // null move: no feature change
-      if (smallActive_)
-        smallAccStack_[ply + 1] = smallAccStack_[ply];
-    }
     const int nullScore = -negamax(pos, depth - 1 - R, -beta, -beta + 1,
                                    ply + 1, limits, callbacks);
     pos.unmake_null_move(undo);
@@ -589,13 +587,9 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     tt_->prefetch(pos.key_after(move));
     Core::UndoInfo undo{};
     pos.make_move(move, undo);
-    if (nnueActive_) {
+    if (nnueActive_)
       eval_->big().update(accStack_[ply], accStack_[ply + 1], pos, move, undo,
                           refreshTable_.get());
-      if (smallActive_)
-        eval_->small().update(smallAccStack_[ply], smallAccStack_[ply + 1], pos,
-                              move, undo, smallRefreshTable_.get());
-    }
 
     const int newDepth = depth - 1 + extension;
     int score;
@@ -701,13 +695,9 @@ int EngineSearch::search_root(Core::Position &root, Core::MoveList &rootMoves,
     tt_->prefetch(root.key_after(move));
     Core::UndoInfo undo{};
     root.make_move(move, undo);
-    if (nnueActive_) {
+    if (nnueActive_)
       eval_->big().update(accStack_[0], accStack_[1], root, move, undo,
                           refreshTable_.get());
-      if (smallActive_)
-        eval_->small().update(smallAccStack_[0], smallAccStack_[1], root, move,
-                              undo, smallRefreshTable_.get());
-    }
 
     const int newDepth = depth - 1 + extension;
     int score;
@@ -855,8 +845,6 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
   smallActive_ = nnueActive_ && eval_->small_active();
   if (nnueActive_)
     eval_->big().refresh(root, accStack_[0]);
-  if (smallActive_)
-    eval_->small().refresh(root, smallAccStack_[0]);
 
   for (int depth = 1; depth <= limits.maxDepth; ++depth) {
     if (check_stop(limits, callbacks))

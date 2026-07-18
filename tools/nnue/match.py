@@ -53,7 +53,7 @@ OPENINGS = [
 
 
 class Engine:
-    def __init__(self, binary: str, net: str | None):
+    def __init__(self, binary: str, net: str | None, small: str | None = None):
         self.proc = subprocess.Popen(
             [os.path.abspath(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1
         )
@@ -63,6 +63,8 @@ class Engine:
         self._send("setoption name Hash value 64")
         if net:
             self._send(f"setoption name EvalFile value {net}")
+        if small:
+            self._send(f"setoption name EvalFileSmall value {small}")
         self._send("isready")
         self._wait("readyok")
 
@@ -158,12 +160,13 @@ def main() -> int:
     p.add_argument("--engine", required=True)
     p.add_argument("--net", required=True, help="EvalFile for the 'new' side")
     p.add_argument("--base-net", default=None, help="EvalFile for the base side (default: classical)")
+    p.add_argument("--net-small", default=None, help="EvalFileSmall for the 'new' side (dual-net)")
     p.add_argument("--games", type=int, default=100)
     p.add_argument("--nodes", type=int, default=10000)
     p.add_argument("--max-plies", type=int, default=400)
     args = p.parse_args()
 
-    new_eng = Engine(args.engine, args.net)
+    new_eng = Engine(args.engine, args.net, args.net_small)
     base_eng = Engine(args.engine, args.base_net)
     tally = Tally()
     try:
