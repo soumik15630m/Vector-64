@@ -125,6 +125,12 @@ private:
   bool nnueActive_ = false;
   bool smallActive_ = false;
 
+#ifdef ENGINE_PROF
+  // Cycle attribution for the hot-path audit (rdtsc; build with -DENGINE_PROF).
+  uint64_t profEvalCyc_ = 0, profUpdCyc_ = 0, profSmallCyc_ = 0;
+  uint64_t profEvals_ = 0, profUpds_ = 0, profSmallEvals_ = 0;
+#endif
+
   // Live only while a multi-threaded search runs; lets the master
   // aggregate helper node counts for reporting.
   std::vector<EngineSearch *> helperViews_;

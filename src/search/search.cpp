@@ -5,6 +5,16 @@
 #include <memory>
 #include <thread>
 
+#ifdef ENGINE_PROF
+#include <cstdio>
+#include <x86intrin.h>
+#define PROF_T0 const uint64_t profT0 = __rdtsc()
+#define PROF_ADD(cyc, cnt) (cyc) += __rdtsc() - profT0, ++(cnt)
+#else
+#define PROF_T0 (void)0
+#define PROF_ADD(cyc, cnt) (void)0
+#endif
+
 namespace Search {
 namespace {
 
@@ -293,14 +303,20 @@ int EngineSearch::eval_pos(const Core::Position &pos, int ply) {
       if (simple > SMALL_NET_THRESHOLD || simple < -SMALL_NET_THRESHOLD) {
         // On-demand small eval: a couple of finny diffs, and the big
         // accumulator stays unresolved for this whole subtree branch.
+        PROF_T0;
         eval_->small().refresh_perspective(pos, Core::WHITE, smallScratch_,
                                            *smallRefreshTable_);
         eval_->small().refresh_perspective(pos, Core::BLACK, smallScratch_,
                                            *smallRefreshTable_);
-        return eval_->small().evaluate(pos, smallScratch_);
+        const int v = eval_->small().evaluate(pos, smallScratch_);
+        PROF_ADD(profSmallCyc_, profSmallEvals_);
+        return v;
       }
     }
-    return eval_->evaluate(pos, accStack_[ply]);
+    PROF_T0;
+    const int v = eval_->evaluate(pos, accStack_[ply]);
+    PROF_ADD(profEvalCyc_, profEvals_);
+    return v;
   }
   return eval_->evaluate(pos);
 }
@@ -433,9 +449,12 @@ HOT_FN int EngineSearch::quiescence(Core::Position &pos, int alpha, int beta,
     tt_->prefetch(pos.key_after(move));
     Core::UndoInfo undo{};
     pos.make_move(move, undo);
-    if (nnueActive_)
+    if (nnueActive_) {
+      PROF_T0;
       eval_->big().update(accStack_[ply], accStack_[ply + 1], pos, move, undo,
                           refreshTable_.get());
+      PROF_ADD(profUpdCyc_, profUpds_);
+    }
     const int score =
         -quiescence(pos, -beta, -alpha, ply + 1, limits, callbacks);
     pos.unmake_move(move, undo);
@@ -587,9 +606,12 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     tt_->prefetch(pos.key_after(move));
     Core::UndoInfo undo{};
     pos.make_move(move, undo);
-    if (nnueActive_)
+    if (nnueActive_) {
+      PROF_T0;
       eval_->big().update(accStack_[ply], accStack_[ply + 1], pos, move, undo,
                           refreshTable_.get());
+      PROF_ADD(profUpdCyc_, profUpds_);
+    }
 
     const int newDepth = depth - 1 + extension;
     int score;
@@ -695,9 +717,12 @@ int EngineSearch::search_root(Core::Position &root, Core::MoveList &rootMoves,
     tt_->prefetch(root.key_after(move));
     Core::UndoInfo undo{};
     root.make_move(move, undo);
-    if (nnueActive_)
+    if (nnueActive_) {
+      PROF_T0;
       eval_->big().update(accStack_[0], accStack_[1], root, move, undo,
                           refreshTable_.get());
+      PROF_ADD(profUpdCyc_, profUpds_);
+    }
 
     const int newDepth = depth - 1 + extension;
     int score;
@@ -915,6 +940,18 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
   if (out.completedDepth == 0) {
     out.scoreCp = eval_pos(root, 0);
   }
+#ifdef ENGINE_PROF
+  std::fprintf(
+      stderr,
+      "PROF nodes=%llu evals=%llu upds=%llu small=%llu "
+      "evalcyc=%llu updcyc=%llu smallcyc=%llu\n",
+      (unsigned long long)nodes_, (unsigned long long)profEvals_,
+      (unsigned long long)profUpds_, (unsigned long long)profSmallEvals_,
+      (unsigned long long)profEvalCyc_, (unsigned long long)profUpdCyc_,
+      (unsigned long long)profSmallCyc_);
+  profEvalCyc_ = profUpdCyc_ = profSmallCyc_ = 0;
+  profEvals_ = profUpds_ = profSmallEvals_ = 0;
+#endif
   out.nodes = nodes_;
 
   return out;
