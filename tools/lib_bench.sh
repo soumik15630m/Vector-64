@@ -109,12 +109,27 @@ measure_search_mt() {
 # Locate a primary net for the NNUE bench: $EVALFILE overrides, else the
 # newest runs/*/stk_halfka_1024.nnue, else any .nnue beside the repo root.
 find_evalfile() {
-  if [[ -n "${EVALFILE:-}" && -f "${EVALFILE:-}" ]]; then echo "$EVALFILE"; return; fi
-  local c
-  c=$(ls -t "$REPO_ROOT"/runs/*/stk_halfka_1024.nnue 2>/dev/null | head -1 || true)
-  [[ -n "$c" ]] && { echo "$c"; return; }
-  c=$(ls -t "$REPO_ROOT"/*.nnue 2>/dev/null | head -1 || true)
+  local c=""
+  if [[ -n "${EVALFILE:-}" && -f "${EVALFILE:-}" ]]; then
+    c="$EVALFILE"
+  else
+    c=$(ls -t "$REPO_ROOT"/runs/*/stk_halfka_1024.nnue 2>/dev/null | head -1 || true)
+    [[ -z "$c" ]] && c=$(ls -t "$REPO_ROOT"/*.nnue 2>/dev/null | head -1 || true)
+  fi
+  # A Windows engine binary cannot open an msys-style /d/... path.
+  if [[ -n "$c" ]] && command -v cygpath >/dev/null 2>&1; then
+    c=$(cygpath -m "$c")
+  fi
   echo "${c:-}"
+}
+
+# The engine must confirm the load, or the "NNUE" numbers would silently be
+# classical ones. Echoes 1 on confirmed load.
+verify_evalfile() {
+  local exe="$1" net="$2"
+  printf "setoption name EvalFile value %s
+quit
+" "$net" | "$exe" 2>/dev/null     | grep -q "EvalFile loaded" && echo 1 || echo 0
 }
 
 # best-of-N NNUE search (net loaded), single- and multi-thread, echoes nps
