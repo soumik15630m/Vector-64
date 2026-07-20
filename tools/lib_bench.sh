@@ -106,6 +106,43 @@ measure_search_mt() {
     [[ "${n:-0}" -gt "$best" ]] && best="$n"; sleep 0.3
   done; echo "$best"
 }
+# Locate a primary net for the NNUE bench: $EVALFILE overrides, else the
+# newest runs/*/stk_halfka_1024.nnue, else any .nnue beside the repo root.
+find_evalfile() {
+  if [[ -n "${EVALFILE:-}" && -f "${EVALFILE:-}" ]]; then echo "$EVALFILE"; return; fi
+  local c
+  c=$(ls -t "$REPO_ROOT"/runs/*/stk_halfka_1024.nnue 2>/dev/null | head -1 || true)
+  [[ -n "$c" ]] && { echo "$c"; return; }
+  c=$(ls -t "$REPO_ROOT"/*.nnue 2>/dev/null | head -1 || true)
+  echo "${c:-}"
+}
+
+# best-of-N NNUE search (net loaded), single- and multi-thread, echoes nps
+measure_search_nnue_st() {
+  local exe="$1" net="$2" best=0 n
+  for _ in $(seq 1 "$SEARCH_RUNS"); do
+    n=$(printf "setoption name Threads value 1\nsetoption name EvalFile value %s\nbench %s\nquit\n" "$net" "$BENCH_DEPTH" | "$exe" 2>/dev/null | grep -oE "nps [0-9]+" | grep -oE "[0-9]+" || echo 0)
+    [[ "${n:-0}" -gt "$best" ]] && best="$n"; sleep 0.3
+  done; echo "$best"
+}
+measure_search_nnue_mt() {
+  local exe="$1" net="$2" best=0 n
+  for _ in $(seq 1 "$SEARCH_RUNS"); do
+    n=$(printf "setoption name EvalFile value %s\nbench %s\nquit\n" "$net" "$BENCH_DEPTH" | "$exe" 2>/dev/null | grep -oE "nps [0-9]+" | grep -oE "[0-9]+" || echo 0)
+    [[ "${n:-0}" -gt "$best" ]] && best="$n"; sleep 0.3
+  done; echo "$best"
+}
+
+print_nnue_lines() {
+  local st="$1" mt="$2" net="$3" thr="$4"
+  awk -v st="$st" -v mt="$mt" -v thr="$thr" -v g="$C_GRN" -v r="$C_RESET" -v b="$C_BOLD" -v d="$C_DIM" \
+    'BEGIN{
+      printf "  %sNNUE  %s  ST      %s%8.2f%s Mnps\n", b, r, g, st/1e6, r;
+      printf "  %sNNUE  %s  MT      %s%8.2f%s Mnps   %s(%s threads)%s\n", b, r, g, mt/1e6, r, d, thr, r;
+    }'
+  printf "  ${C_DIM}net: %s${C_RESET}\n" "$(basename "$net")"
+}
+
 # best-of-N perft, echoes "ST_MNPS MT_MNPS"
 measure_perft() {
   local exe="$1" bs=0 bm=0 out s m
