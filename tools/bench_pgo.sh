@@ -49,11 +49,13 @@ print_report "$ST" "$MT" "$PST" "$PMT" "$(cpu_threads)" \
   "PGO (search-tuned) · perft may dip vs default — expected · depth $BENCH_DEPTH bench"
 
 NET=$(find_evalfile)
-if [[ -n "$NET" ]]; then
+if [[ -n "$NET" && "$(verify_evalfile "$EXE" "$NET")" == "1" ]]; then
   step "Measuring NNUE search (best-of-$SEARCH_RUNS, net: $(basename "$NET"))..."
   NST=$(measure_search_nnue_st "$EXE" "$NET")
   NMT=$(measure_search_nnue_mt "$EXE" "$NET")
   print_nnue_lines "$NST" "$NMT" "$NET" "$(cpu_threads)"
+elif [[ -n "$NET" ]]; then
+  printf "  NNUE bench FAILED: engine did not load %s\n" "$NET"
 else
   printf "  NNUE bench skipped: no .nnue found (set EVALFILE=/path/to/net.nnue)\n"
 fi
