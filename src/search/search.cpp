@@ -603,6 +603,20 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     if (movesSearched == 0)
       bestMove = move;
 
+    // Shallow-depth quiet-move pruning, only once a real move has been
+    // searched (so mates/stalemates are never misdiagnosed) and away from
+    // mate scores.
+    if (isQuiet && !isPVNode && !inCheck && movesSearched >= 1 &&
+        bestScore > -MATE_BOUND) {
+      // Movecount (late-move) pruning: quiets this deep in the list at
+      // shallow depth almost never rescue the node.
+      if (depth <= 8 && movesSearched >= 3 + depth * depth)
+        continue;
+      // Futility: a quiet move cannot lift a position this far below alpha.
+      if (depth <= 6 && evalForPruning + 100 + 120 * depth <= alpha)
+        continue;
+    }
+
     tt_->prefetch(pos.key_after(move));
     Core::UndoInfo undo{};
     pos.make_move(move, undo);
