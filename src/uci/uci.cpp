@@ -251,6 +251,8 @@ private:
          std::to_string(moveOverheadMs_) + " min 0 max 500");
     emit("option name EvalFile type string default <empty>");
     emit("option name EvalFileSmall type string default <empty>");
+    emit("option name SmallNetThreshold type spin default 950 min 0 max 5000");
+    emit("option name ShowStats type check default false");
     emit("uciok");
   }
 
@@ -307,6 +309,23 @@ private:
         return;
       }
       moveOverheadMs_ = std::clamp(parsed, 0, 500);
+      return;
+    }
+
+    if (name == "smallnetthreshold") {
+      int parsed = 950;
+      if (!parse_int(value, parsed)) {
+        emit("info string setoption SmallNetThreshold: invalid value '" +
+             value + "'");
+        return;
+      }
+      stop_and_join(true);
+      search_.set_small_net_threshold(parsed);
+      return;
+    }
+
+    if (name == "showstats") {
+      statsInfo_ = (to_lower(value) == "true");
       return;
     }
 

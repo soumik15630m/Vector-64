@@ -5,13 +5,13 @@
 # update EXPECTED in the same commit; unintended ones are caught here.
 #
 #   bash tools/bench_signature.sh <path-to-ChessEngine>
-#   BENCH_SIG_DEPTH=13 BENCH_SIG_NODES=4892438 bash tools/bench_signature.sh ...
+#   BENCH_SIG_DEPTH=13 BENCH_SIG_NODES=3535500 bash tools/bench_signature.sh ...
 
 set -euo pipefail
 
 ENGINE="${1:?usage: bench_signature.sh <path-to-ChessEngine>}"
 DEPTH="${BENCH_SIG_DEPTH:-13}"
-EXPECTED="${BENCH_SIG_NODES:-4892438}"
+EXPECTED="${BENCH_SIG_NODES:-3535500}"
 
 got=$(printf "setoption name Threads value 1\nsetoption name Hash value 8\nbench %s\nquit\n" "$DEPTH" \
   | "$ENGINE" 2>/dev/null | grep -oE "nodes [0-9]+" | grep -oE "[0-9]+" | head -1)

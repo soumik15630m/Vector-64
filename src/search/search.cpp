@@ -271,6 +271,10 @@ void EngineSearch::set_threads(int threads) {
   threadCount_ = std::clamp(threads, 1, 64);
 }
 
+void EngineSearch::set_small_net_threshold(int cp) {
+  smallNetThreshold_ = std::clamp(cp, 0, 5000);
+}
+
 void EngineSearch::clear() {
   tt_->clear();
   ordering_.clear();
@@ -289,18 +293,16 @@ int EngineSearch::evaluate(const Core::Position &pos) {
 }
 
 // Dual-net gate: when the O(1) material+psqt estimate already calls the
-// position clearly decided, the cheap 128-wide net's verdict is sufficient
-// and the 1024-wide forward is skipped.
-namespace {
-constexpr int SMALL_NET_THRESHOLD = 950;
-}
+// position clearly decided (|estimate| > smallNetThreshold_), the cheap
+// 128-wide net's verdict is sufficient and the 1024-wide forward is skipped.
+// The threshold is a tunable UCI option (SmallNetThreshold).
 
 int EngineSearch::eval_pos(const Core::Position &pos, int ply) {
   if (nnueActive_) {
     if (smallActive_) {
       const int sign = pos.side_to_move() == Core::WHITE ? 1 : -1;
       const int simple = sign * (pos.material_wb() + pos.psqt_wb());
-      if (simple > SMALL_NET_THRESHOLD || simple < -SMALL_NET_THRESHOLD) {
+      if (simple > smallNetThreshold_ || simple < -smallNetThreshold_) {
         // On-demand small eval: a couple of finny diffs, and the big
         // accumulator stays unresolved for this whole subtree branch.
         PROF_T0;
@@ -526,6 +528,12 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     }
   }
 
+  // Internal Iterative Reduction: with no TT move to guide ordering at a
+  // node deep enough to matter, a full-depth search wastes effort on a bad
+  // move order; reduce by one so the shallower search fills in a TT move.
+  if (depth >= 4 && !ttMove.is_ok())
+    depth -= 1;
+
   const Core::NodeLegality nodeLegal = Core::make_node_legality(pos);
   const bool inCheck = nodeLegal.in_check();
 
@@ -614,6 +622,17 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
         continue;
       // Futility: a quiet move cannot lift a position this far below alpha.
       if (depth <= 6 && evalForPruning + 100 + 120 * depth <= alpha)
+        continue;
+    }
+
+    // SEE-based pruning: in a non-PV node at shallow depth, skip moves that
+    // lose too much material by static exchange. Quiets get a linear margin
+    // (a quiet that hangs a piece is almost never best); captures a looser
+    // quadratic one, since a losing capture can begin a deeper tactic.
+    if (!isPVNode && !inCheck && !move.is_promotion() && movesSearched >= 1 &&
+        bestScore > -MATE_BOUND && depth <= 8) {
+      const int seeMargin = isQuiet ? -50 * depth : -20 * depth * depth;
+      if (see(pos, move) < seeMargin)
         continue;
     }
 
@@ -812,6 +831,7 @@ Result EngineSearch::search(Core::Position root, const Limits &limits,
 
   for (int i = 1; i < threadCount_; ++i) {
     helpers.emplace_back(new EngineSearch(tt_, eval_));
+    helpers.back()->smallNetThreshold_ = smallNetThreshold_;
     helperViews_.push_back(helpers.back().get());
   }
 

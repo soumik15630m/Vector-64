@@ -53,6 +53,7 @@ public:
 
   void set_hash_mb(size_t hashMb);
   void set_threads(int threads);
+  void set_small_net_threshold(int cp);
   void clear();
   bool load_nnue(const std::string &path);
   bool load_nnue_small(const std::string &path);
@@ -124,6 +125,8 @@ private:
   std::unique_ptr<NNUE::SmallRefreshTable> smallRefreshTable_;
   bool nnueActive_ = false;
   bool smallActive_ = false;
+  // Dual-net gate: |material+psqt| above this (cp) takes the small-net eval.
+  int smallNetThreshold_ = 950;
 
 #ifdef ENGINE_PROF
   // Cycle attribution for the hot-path audit (rdtsc; build with -DENGINE_PROF).
