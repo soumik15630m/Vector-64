@@ -78,13 +78,18 @@ BENCH_FENS = [
 class STKNet(nn.Module):
     """Normalized-domain model of src/nnue/network.{h,cpp}."""
 
-    def __init__(self) -> None:
+    def __init__(self, hidden: int = 0) -> None:
         super().__init__()
+        # Width captured per-instance so a 1024-wide teacher and a 128-wide
+        # student can coexist (distillation) regardless of the global HIDDEN.
+        h = hidden or HIDDEN
+        self.hidden = h
+        self.pair = h // 2
         # Row 0 is a frozen zero row for -1 padding (indices are shifted +1).
-        self.ft = nn.EmbeddingBag(FEATURES + 1, HIDDEN, mode="sum", padding_idx=0)
-        self.ft_bias = nn.Parameter(torch.zeros(HIDDEN))
+        self.ft = nn.EmbeddingBag(FEATURES + 1, h, mode="sum", padding_idx=0)
+        self.ft_bias = nn.Parameter(torch.zeros(h))
         self.psqt = nn.EmbeddingBag(FEATURES + 1, BUCKETS, mode="sum", padding_idx=0)
-        self.l1w = nn.Parameter(torch.empty(BUCKETS, L1, 2 * PAIR))
+        self.l1w = nn.Parameter(torch.empty(BUCKETS, L1, h))
         self.l1b = nn.Parameter(torch.zeros(BUCKETS, L1))
         self.l2w = nn.Parameter(torch.empty(BUCKETS, L2, L1))
         self.l2b = nn.Parameter(torch.zeros(BUCKETS, L2))
@@ -123,7 +128,7 @@ class STKNet(nn.Module):
 
         def pairwise(a: torch.Tensor) -> torch.Tensor:
             c = torch.clamp(a, 0.0, 1.0)
-            return c[:, :PAIR] * c[:, PAIR:] * PAIR_FACTOR
+            return c[:, : self.pair] * c[:, self.pair :] * PAIR_FACTOR
 
         x = torch.cat([pairwise(us), pairwise(them)], dim=1)
         l1 = torch.clamp(torch.einsum("bi,koi->bko", x, self.l1w) + self.l1b, 0.0, 1.0)
@@ -243,6 +248,22 @@ def stage_train(args: argparse.Namespace, work: Path, data_dir: Path) -> Path:
 
     device = torch.device(args.device)
     model = STKNet().to(device)
+
+    # Distillation: when --teacher is a 1024-wide float checkpoint, the small
+    # student is trained to match the teacher's own eval instead of the
+    # dataset label. Both outputs are side-to-move relative, so the teacher
+    # value is used directly as the target (no white-perspective flip). This
+    # makes the small net AGREE with the big net -- the requirement for the
+    # dual-net gate to help rather than hurt.
+    teacher = None
+    if args.teacher:
+        teacher = STKNet(hidden=1024).to(device)
+        tck = torch.load(args.teacher, map_location=device, weights_only=False)
+        teacher.load_state_dict(tck["state_dict"])
+        teacher.eval()
+        for pp in teacher.parameters():
+            pp.requires_grad_(False)
+        print(f"[train] distilling from teacher {args.teacher} (1024-wide)")
     # bullet's canonical recipe (examples/simple.rs): AdamW (decay 0.01, weight
     # clipping +/-1.98 == our +/-127/64), lr 1e-3 dropping x0.1 at 45% and 90%
     # of the run (their step 18 of 40 superbatches), batch 16384.
@@ -299,9 +320,14 @@ def stage_train(args: argparse.Namespace, work: Path, data_dir: Path) -> Path:
                     cp = torch.from_numpy(d["eval_cp"][sel]).float().to(device)
                     pieces = (w >= 0).sum(dim=1) + 1
                     bucket = torch.clamp((pieces - 1) // 4, 0, BUCKETS - 1)
-                    # eval_cp is white-perspective; the model output is
-                    # side-to-move relative, so flip black-to-move targets.
-                    target = torch.where(stm == 0, cp, -cp)
+                    if teacher is not None:
+                        # Teacher output is already side-to-move relative.
+                        with torch.no_grad():
+                            target = teacher(w, b, stm, bucket)
+                    else:
+                        # eval_cp is white-perspective; the model output is
+                        # side-to-move relative, so flip black-to-move targets.
+                        target = torch.where(stm == 0, cp, -cp)
                     opt.zero_grad(set_to_none=True)
                     pred = model(w, b, stm, bucket)
                     # bullet loss form: sigmoid(eval/400) squared error.
@@ -494,6 +520,10 @@ def main() -> int:
     p.add_argument("--workdir", required=True)
     p.add_argument("--epochs", type=int, default=20, help="20 x 200M ~= bullet's canonical 4B visits")
     p.add_argument("--hidden", type=int, default=1024, choices=(1024, 128), help="net width (128 = small net)")
+    p.add_argument("--teacher", default=None,
+                   help="distill the (128-wide) student from this 1024-wide model_float.pt")
+    p.add_argument("--data-dir", default=None,
+                   help="reuse an existing prepared shard dir (skips prep; e.g. runs/v2/data)")
     p.add_argument("--mix-shards", type=int, default=1, help="shards shuffled together per group (8 recommended)")
     p.add_argument("--batch-size", type=int, default=16384)
     p.add_argument("--lr", type=float, default=1e-3)
@@ -514,7 +544,9 @@ def main() -> int:
     work.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(42)
 
-    data_dir = stage_prep(args, work)
+    # Reuse an already-prepared shard directory (e.g. the big net's) instead
+    # of re-prepping -- the distillation student ignores the stored labels.
+    data_dir = Path(args.data_dir) if args.data_dir else stage_prep(args, work)
     float_path = stage_train(args, work, data_dir)
     net_path = stage_export(work, float_path)
     stage_verify(args, float_path, net_path)
