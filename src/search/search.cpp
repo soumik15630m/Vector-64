@@ -487,7 +487,8 @@ HOT_FN int EngineSearch::quiescence(Core::Position &pos, int alpha, int beta,
 
 HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
                                  int beta, int ply, const Limits &limits,
-                                 const Callbacks &callbacks) {
+                                 const Callbacks &callbacks,
+                                 Core::Move excludedMove) {
   if (depth <= 0)
     return quiescence(pos, alpha, beta, ply, limits, callbacks);
 
@@ -516,7 +517,9 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     nHits_++;
     ttMove = tte->move();
 
-    if (!isPVNode && tte->depth >= depth) {
+    // No TT cutoff during a singular verification search: it must actually
+    // search the alternatives to the excluded move.
+    if (!isPVNode && !excludedMove.is_ok() && tte->depth >= depth) {
       const int ttScore = TranspositionTable::scoreFromTT(tte->score, ply);
 
       if (tte->bound() == BOUND_EXACT)
@@ -561,16 +564,17 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
 
   // Reverse futility pruning: far enough above beta that a shallow
   // search is extremely unlikely to fall back under it.
-  if (!isPVNode && !inCheck && depth <= 8 && beta < MATE_BOUND &&
-      evalForPruning - 80 * depth >= beta) {
+  if (!isPVNode && !inCheck && !excludedMove.is_ok() && depth <= 8 &&
+      beta < MATE_BOUND && evalForPruning - 80 * depth >= beta) {
     return evalForPruning;
   }
 
   // Null Move Pruning: give the opponent a free move; if our position
   // still beats beta, trust the fail-high. Skipped without non-pawn
-  // material where zugzwang would make it unsound.
-  if (!isPVNode && !inCheck && depth >= 3 && evalForPruning >= beta &&
-      pos.has_non_pawn_material(pos.side_to_move())) {
+  // material where zugzwang would make it unsound, and during a singular
+  // verification search.
+  if (!isPVNode && !inCheck && !excludedMove.is_ok() && depth >= 3 &&
+      evalForPruning >= beta && pos.has_non_pawn_material(pos.side_to_move())) {
     const int R = 3 + depth / 6;
 
     Core::UndoInfo undo;
@@ -592,7 +596,7 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
 
   const Core::Color us = pos.side_to_move();
   const int originalAlpha = alpha;
-  const int extension = inCheck ? 1 : 0;
+  const int baseExtension = inCheck ? 1 : 0;
 
   Core::Move bestMove = Core::Move::none();
   int bestScore = -INF_SCORE;
@@ -606,10 +610,31 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
       break;
     if (!pickerEmitsLegal && !Core::is_legal(nodeLegal, move))
       continue;
+    if (move == excludedMove)
+      continue;
 
     const bool isQuiet = !move.is_capture() && !move.is_promotion();
     if (movesSearched == 0)
       bestMove = move;
+
+    // Singular extension: verify whether the TT move is the only good move
+    // by searching the alternatives at reduced depth below a lowered window.
+    // If they all fail low, the TT move is forced -- search it one ply
+    // deeper so tactics behind it are not missed.
+    int extension = baseExtension;
+    if (!inCheck && !excludedMove.is_ok() && move == ttMove && depth >= 8 &&
+        tte != nullptr && tte->depth >= depth - 3 &&
+        tte->bound() != BOUND_UPPER) {
+      const int ttScore = TranspositionTable::scoreFromTT(tte->score, ply);
+      if (!is_mate_score(ttScore)) {
+        const int singularBeta = ttScore - 3 * depth;
+        const int singularDepth = (depth - 1) / 2;
+        const int s = negamax(pos, singularDepth, singularBeta - 1,
+                              singularBeta, ply, limits, callbacks, ttMove);
+        if (!stopped_ && s < singularBeta)
+          extension = 1;
+      }
+    }
 
     // Shallow-depth quiet-move pruning, only once a real move has been
     // searched (so mates/stalemates are never misdiagnosed) and away from
@@ -692,7 +717,9 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     }
 
     if (alpha >= beta) {
-      if (isQuiet) {
+      // Do not let a singular verification search (excluded move, narrow
+      // window) pollute the real killers/history the main search orders by.
+      if (isQuiet && !excludedMove.is_ok()) {
         ordering_.update_killers(ply, move);
         ordering_.update_history(us, move, depth);
         for (int q = 0; q < quietsCount; ++q) {
@@ -707,10 +734,16 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
   }
 
   if (movesSearched == 0) {
+    // No alternative to the excluded move: treat as a fail-low so the
+    // singular test sees the TT move as forced.
+    if (excludedMove.is_ok())
+      return alpha;
     return inCheck ? (-MATE_SCORE + ply) : 0;
   }
 
-  if (!stopped_) {
+  // A singular verification search must not pollute the table (its window
+  // and excluded move make the result unrepresentative of this position).
+  if (!stopped_ && !excludedMove.is_ok()) {
     TTBound bound;
     if (bestScore <= originalAlpha)
       bound = BOUND_UPPER;

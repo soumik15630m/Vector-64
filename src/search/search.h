@@ -86,7 +86,8 @@ private:
   int eval_pos(const Core::Position &pos, int ply);
 
   int negamax(Core::Position &pos, int depth, int alpha, int beta, int ply,
-              const Limits &limits, const Callbacks &callbacks);
+              const Limits &limits, const Callbacks &callbacks,
+              Core::Move excludedMove = Core::Move::none());
 
   int quiescence(Core::Position &pos, int alpha, int beta, int ply,
                  const Limits &limits, const Callbacks &callbacks);
