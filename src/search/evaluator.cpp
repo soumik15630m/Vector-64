@@ -30,8 +30,8 @@ int Evaluator::evaluate(const Core::Position &pos) const {
   return sign * (pos.material_wb() + pos.psqt_wb());
 }
 
-int Evaluator::evaluate(const Core::Position &pos, const NNUE::Accumulator &acc,
-                        int lazyMargin) const {
-  return big_.evaluate(pos, acc, lazyMargin);
+int Evaluator::evaluate(const Core::Position &pos,
+                        const NNUE::Accumulator &acc) const {
+  return big_.evaluate(pos, acc);
 }
 } // namespace Search

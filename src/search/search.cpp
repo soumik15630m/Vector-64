@@ -307,24 +307,32 @@ int EngineSearch::evaluate(const Core::Position &pos) {
 
 int EngineSearch::eval_pos(const Core::Position &pos, int ply) {
   if (nnueActive_) {
-    if (smallActive_) {
-      const int sign = pos.side_to_move() == Core::WHITE ? 1 : -1;
-      const int simple = sign * (pos.material_wb() + pos.psqt_wb());
-      if (simple > smallNetThreshold_ || simple < -smallNetThreshold_) {
-        // On-demand small eval: a couple of finny diffs, and the big
-        // accumulator stays unresolved for this whole subtree branch.
-        PROF_T0;
-        eval_->small().refresh_perspective(pos, Core::WHITE, smallScratch_,
-                                           *smallRefreshTable_);
-        eval_->small().refresh_perspective(pos, Core::BLACK, smallScratch_,
-                                           *smallRefreshTable_);
-        const int v = eval_->small().evaluate(pos, smallScratch_);
-        PROF_ADD(profSmallCyc_, profSmallEvals_);
-        return v;
-      }
+    const int sign = pos.side_to_move() == Core::WHITE ? 1 : -1;
+    const int simple = sign * (pos.material_wb() + pos.psqt_wb());
+
+    // Lazy eval: when the O(1) material+psqt estimate already calls the
+    // position clearly decided, skip the NNUE forward entirely and return the
+    // cheap estimate. (Gated on the hand-coded material term, not the net's
+    // PSQT side-output, which does not reliably encode material.)
+    if (lazyEvalMargin_ > 0 &&
+        (simple > lazyEvalMargin_ || simple < -lazyEvalMargin_))
+      return simple;
+
+    if (smallActive_ &&
+        (simple > smallNetThreshold_ || simple < -smallNetThreshold_)) {
+      // On-demand small eval: a couple of finny diffs, and the big
+      // accumulator stays unresolved for this whole subtree branch.
+      PROF_T0;
+      eval_->small().refresh_perspective(pos, Core::WHITE, smallScratch_,
+                                         *smallRefreshTable_);
+      eval_->small().refresh_perspective(pos, Core::BLACK, smallScratch_,
+                                         *smallRefreshTable_);
+      const int v = eval_->small().evaluate(pos, smallScratch_);
+      PROF_ADD(profSmallCyc_, profSmallEvals_);
+      return v;
     }
     PROF_T0;
-    const int v = eval_->evaluate(pos, accStack_[ply], lazyEvalMargin_);
+    const int v = eval_->evaluate(pos, accStack_[ply]);
     PROF_ADD(profEvalCyc_, profEvals_);
     return v;
   }

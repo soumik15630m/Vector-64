@@ -786,9 +786,8 @@ public:
     }
   }
 
-  int evaluate(const Core::Position &pos, const AccumulatorT<H> &a,
-               int lazyMargin = 0) const {
-    return forward(a, pos.side_to_move(), bucket_of(pos), nullptr, lazyMargin);
+  int evaluate(const Core::Position &pos, const AccumulatorT<H> &a) const {
+    return forward(a, pos.side_to_move(), bucket_of(pos), nullptr);
   }
 
   int evaluate_probe(const Core::Position &pos, const AccumulatorT<H> &a,
@@ -845,18 +844,7 @@ private:
   }
 
   int forward(const AccumulatorT<H> &a, Core::Color stm, int bucket,
-              Probe *probe, int lazyMargin = 0) const {
-    // The PSQT side-output is already maintained in the accumulator, so it is
-    // free here. Lazy eval: when it alone calls the position clearly decided
-    // (|psqt| >= lazyMargin), skip the expensive pairwise + dense layers and
-    // return the PSQT estimate. lazyMargin 0 disables it (full forward, the
-    // exact prior behaviour); the probe path always does the full forward.
-    const int psqtTerm =
-        (a.psqt[stm][bucket] - a.psqt[~stm][bucket]) >> Arch::PSQT_SHIFT;
-    if (lazyMargin > 0 && probe == nullptr &&
-        (psqtTerm >= lazyMargin || psqtTerm <= -lazyMargin))
-      return psqtTerm;
-
+              Probe *probe) const {
     const auto &us = a.acc[stm];
     const auto &them = a.acc[~stm];
 
@@ -905,6 +893,8 @@ private:
 
     const int raw = b.outb + detail::dot(l2o.data(), b.outw.data(), Arch::L2);
     const int positional = raw >> Arch::OUT_SHIFT;
+    const int psqtTerm =
+        (a.psqt[stm][bucket] - a.psqt[~stm][bucket]) >> Arch::PSQT_SHIFT;
     const int eval = positional + psqtTerm;
 
     if (probe) {

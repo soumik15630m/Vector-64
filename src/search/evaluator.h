@@ -21,10 +21,8 @@ public:
   // Side-to-move centipawn score, rebuilding an accumulator (UCI `eval`,
   // fallbacks). Pure big-net NNUE when loaded, else classical material+psqt.
   int evaluate(const Core::Position &pos) const;
-  // Search path: caller-maintained accumulator. lazyMargin > 0 lets the big
-  // net skip its dense layers when its PSQT side-output is already decisive.
-  int evaluate(const Core::Position &pos, const NNUE::Accumulator &acc,
-               int lazyMargin = 0) const;
+  // Search path: caller-maintained accumulator.
+  int evaluate(const Core::Position &pos, const NNUE::Accumulator &acc) const;
 
   bool nnue_active() const { return big_.is_loaded(); }
   bool small_active() const { return small_.is_loaded(); }
