@@ -54,6 +54,7 @@ public:
   void set_hash_mb(size_t hashMb);
   void set_threads(int threads);
   void set_small_net_threshold(int cp);
+  void set_lazy_eval_margin(int cp);
   void clear();
   bool load_nnue(const std::string &path);
   bool load_nnue_small(const std::string &path);
@@ -129,6 +130,9 @@ private:
   bool smallActive_ = false;
   // Dual-net gate: |material+psqt| above this (cp) takes the small-net eval.
   int smallNetThreshold_ = 950;
+  // Lazy eval: |PSQT side-output| above this (cp) skips the big net's dense
+  // layers. 0 = off (always full forward). Tuned via UCI / SPRT.
+  int lazyEvalMargin_ = 0;
 
 #ifdef ENGINE_PROF
   // Cycle attribution for the hot-path audit (rdtsc; build with -DENGINE_PROF).

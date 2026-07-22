@@ -279,6 +279,10 @@ void EngineSearch::set_small_net_threshold(int cp) {
   smallNetThreshold_ = std::clamp(cp, 0, 5000);
 }
 
+void EngineSearch::set_lazy_eval_margin(int cp) {
+  lazyEvalMargin_ = std::clamp(cp, 0, 5000);
+}
+
 void EngineSearch::clear() {
   tt_->clear();
   ordering_.clear();
@@ -320,7 +324,7 @@ int EngineSearch::eval_pos(const Core::Position &pos, int ply) {
       }
     }
     PROF_T0;
-    const int v = eval_->evaluate(pos, accStack_[ply]);
+    const int v = eval_->evaluate(pos, accStack_[ply], lazyEvalMargin_);
     PROF_ADD(profEvalCyc_, profEvals_);
     return v;
   }
@@ -887,6 +891,7 @@ Result EngineSearch::search(Core::Position root, const Limits &limits,
   for (int i = 1; i < threadCount_; ++i) {
     helpers.emplace_back(new EngineSearch(tt_, eval_));
     helpers.back()->smallNetThreshold_ = smallNetThreshold_;
+    helpers.back()->lazyEvalMargin_ = lazyEvalMargin_;
     helpers.back()->threadId_ = i;
     helperViews_.push_back(helpers.back().get());
   }

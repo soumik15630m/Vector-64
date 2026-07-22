@@ -252,6 +252,7 @@ private:
     emit("option name EvalFile type string default <empty>");
     emit("option name EvalFileSmall type string default <empty>");
     emit("option name SmallNetThreshold type spin default 950 min 0 max 5000");
+    emit("option name LazyEvalMargin type spin default 0 min 0 max 5000");
     emit("option name ShowStats type check default false");
     emit("uciok");
   }
@@ -321,6 +322,18 @@ private:
       }
       stop_and_join(true);
       search_.set_small_net_threshold(parsed);
+      return;
+    }
+
+    if (name == "lazyevalmargin") {
+      int parsed = 0;
+      if (!parse_int(value, parsed)) {
+        emit("info string setoption LazyEvalMargin: invalid value '" + value +
+             "'");
+        return;
+      }
+      stop_and_join(true);
+      search_.set_lazy_eval_margin(parsed);
       return;
     }
 
