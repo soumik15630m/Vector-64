@@ -35,7 +35,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: |
           chmod +x ChessEngine
@@ -48,7 +48,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: |
           chmod +x ChessEngine
@@ -60,7 +60,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: |
           chmod +x ChessEngine
@@ -72,7 +72,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: |
           chmod +x ChessEngine
@@ -84,7 +84,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: |
           chmod +x ChessEngine
@@ -95,7 +95,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: |
           chmod +x ChessEngine
@@ -107,7 +107,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: chmod +x test_zobrist && ./test_zobrist nnue
 
@@ -116,7 +116,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: chmod +x test_zobrist && ./test_zobrist games
 
@@ -126,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: chmod +x ChessEngine && bash tools/bench_signature.sh ./ChessEngine
 
@@ -139,7 +139,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.x' }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: |
           chmod +x ChessEngine
@@ -154,7 +154,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.x' }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: |
           chmod +x ChessEngine
@@ -169,7 +169,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.x' }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: |
           chmod +x ChessEngine
@@ -184,7 +184,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.x' }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: engine-linux }
       - run: |
           chmod +x ChessEngine
