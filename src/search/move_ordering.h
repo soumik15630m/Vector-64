@@ -18,6 +18,11 @@ public:
   void update_history(Core::Color side, Core::Move move, int depth);
   // Penalty for quiet moves that were searched but did not cause the cutoff.
   void update_history_malus(Core::Color side, Core::Move move, int depth);
+  // Capture history, keyed by (mover, attacker type, target, victim type).
+  void update_capture(Core::Color side, Core::PieceType attacker,
+                      Core::Square to, Core::PieceType victim, int depth);
+  void update_capture_malus(Core::Color side, Core::PieceType attacker,
+                            Core::Square to, Core::PieceType victim, int depth);
 
   int score_move(const Core::Position &pos, Core::Move move, Core::Move ttMove,
                  int ply) const;
@@ -34,9 +39,17 @@ public:
     return history_[side][move.from_sq()][move.to_sq()];
   }
 
+  int capture_score(Core::Color side, Core::PieceType attacker, Core::Square to,
+                    Core::PieceType victim) const {
+    return captureHist_[side][attacker][to][victim];
+  }
+
 private:
   Core::Move killers_[MAX_PLY][2]{};
   int history_[Core::COLOR_NB][Core::SQUARE_NB][Core::SQUARE_NB]{};
+  // [mover][attackerType][to][victimType]
+  int captureHist_[Core::COLOR_NB][Core::PIECE_TYPE_NB][Core::SQUARE_NB]
+                  [Core::PIECE_TYPE_NB]{};
 };
 
 } // namespace Search

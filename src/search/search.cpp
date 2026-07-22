@@ -147,12 +147,16 @@ public:
       Core::generate_pseudo_captures(pos_, list_);
       for (int i = 0; i < list_.size(); ++i) {
         const Core::Move m = list_[i];
+        const Core::PieceType attacker = pos_.piece_on(m.from_sq());
         const Core::PieceType victim =
             m.is_en_passant() ? Core::PAWN : pos_.piece_on(m.to_sq());
-        int s =
-            16 * piece_order(victim) - piece_order(pos_.piece_on(m.from_sq()));
+        // MVV-LVA base (kept large so it dominates), refined by how well
+        // this exact capture has historically done.
+        int s = 4096 * (16 * piece_order(victim) - piece_order(attacker));
         if (m.is_promotion())
-          s += 16 * piece_order(m.promotion_type());
+          s += 4096 * 16 * piece_order(m.promotion_type());
+        s += ordering_.capture_score(pos_.side_to_move(), attacker, m.to_sq(),
+                                     victim);
         scores_[i] = s;
       }
       idx_ = 0;
@@ -603,6 +607,8 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
   int movesSearched = 0;
   Core::Move quietsTried[64];
   int quietsCount = 0;
+  Core::Move capturesTried[64];
+  int capturesCount = 0;
 
   while (true) {
     const Core::Move move = picker.next();
@@ -719,16 +725,32 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     if (alpha >= beta) {
       // Do not let a singular verification search (excluded move, narrow
       // window) pollute the real killers/history the main search orders by.
-      if (isQuiet && !excludedMove.is_ok()) {
-        ordering_.update_killers(ply, move);
-        ordering_.update_history(us, move, depth);
-        for (int q = 0; q < quietsCount; ++q) {
-          ordering_.update_history_malus(us, quietsTried[q], depth);
+      if (!excludedMove.is_ok()) {
+        if (isQuiet) {
+          ordering_.update_killers(ply, move);
+          ordering_.update_history(us, move, depth);
+          for (int q = 0; q < quietsCount; ++q)
+            ordering_.update_history_malus(us, quietsTried[q], depth);
+        } else if (move.is_capture()) {
+          const Core::PieceType victim =
+              move.is_en_passant() ? Core::PAWN : pos.piece_on(move.to_sq());
+          ordering_.update_capture(us, pos.piece_on(move.from_sq()),
+                                   move.to_sq(), victim, depth);
+        }
+        // Captures that were tried but did not cut off get a penalty.
+        for (int c = 0; c < capturesCount; ++c) {
+          const Core::Move cm = capturesTried[c];
+          const Core::PieceType v =
+              cm.is_en_passant() ? Core::PAWN : pos.piece_on(cm.to_sq());
+          ordering_.update_capture_malus(us, pos.piece_on(cm.from_sq()),
+                                         cm.to_sq(), v, depth);
         }
       }
       break;
     }
 
+    if (!isQuiet && move.is_capture() && capturesCount < 64)
+      capturesTried[capturesCount++] = move;
     if (isQuiet && quietsCount < 64)
       quietsTried[quietsCount++] = move;
   }
