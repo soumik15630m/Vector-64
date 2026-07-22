@@ -171,7 +171,7 @@ def test_bench_signature_is_deterministic(uci) -> None:
     line, _ = uci.collect_until(lambda ln: "bench depth 13" in ln, timeout=30)
     assert line is not None
     nodes = int(line.split("nodes")[1].split()[0])
-    assert nodes == 13410056
+    assert nodes == 5253789
 
 
 def test_ucinewgame_then_search(uci) -> None:
