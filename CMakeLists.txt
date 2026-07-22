@@ -32,6 +32,11 @@ endif()
 
 if(MSVC)
     add_compile_options(/O2 /W4 /Ot /Ob2 /arch:AVX2)
+    # Deep search recursion (up to MAX_PLY plies, plus singular same-ply
+    # re-searches, each frame carrying large move buffers) overflows MSVC's
+    # 1 MB default stack. Give it 32 MB; on Windows this PE value also seeds
+    # std::thread worker stacks, so it protects real deep searches too.
+    add_link_options(/STACK:33554432)
     if(ENGINE_LTO)
         add_link_options(/LTCG)
     endif()
@@ -50,6 +55,9 @@ else()
     if(WIN32)
         # MinGW: avoid depending on the toolchain's runtime DLLs at run time
         add_link_options(-static)
+        # Same deep-recursion stack headroom as the MSVC build (the PE default
+        # stack also seeds std::thread workers on Windows).
+        add_link_options(-Wl,--stack,33554432)
     endif()
 endif()
 
