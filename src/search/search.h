@@ -28,6 +28,7 @@ struct IterInfo {
   int seldepth = 0;
   int scoreCp = 0; // internal score; mate range per is_mate_score()
   uint64_t nodes = 0;
+  uint64_t tbHits = 0;
   int elapsedMs = 0;
   const Core::Move *pv = nullptr;
   int pvLen = 0;
@@ -58,6 +59,8 @@ public:
   void clear();
   bool load_nnue(const std::string &path);
   bool load_nnue_small(const std::string &path);
+  // Load Syzygy tablebases from a directory list; true if any were found.
+  bool load_syzygy(const std::string &path);
   int evaluate(const Core::Position &pos);
 
   size_t hash_mb() const { return hashMb_; }
@@ -78,6 +81,7 @@ private:
 
   bool check_stop(const Limits &limits, const Callbacks &callbacks);
   void update_pv(int ply, Core::Move move);
+  uint64_t total_tb_hits() const;
 
   // Evaluate `pos` at `ply` from the eagerly maintained big accumulator.
   // When the small net is loaded and the O(1) material+psqt estimate calls
@@ -109,6 +113,12 @@ private:
   uint64_t qHits_ = 0;
   uint64_t nProbes_ = 0;
   uint64_t nHits_ = 0;
+
+  // Syzygy tablebases: cached from the global prober at search start. WDL
+  // probing runs on every thread; the DTZ root probe is master-only.
+  bool syzygyActive_ = false;
+  int syzygyPieces_ = 0; // TB_LARGEST
+  uint64_t tbHits_ = 0;
 
   Core::Move pvTable_[MAX_PLY + 1][MAX_PLY + 1];
   int pvLen_[MAX_PLY + 2] = {};

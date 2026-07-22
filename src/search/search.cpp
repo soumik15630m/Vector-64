@@ -1,5 +1,8 @@
 #include "search.h"
 
+#include "../cores/bitboard.h"
+#include "syzygy.h"
+
 #include <algorithm>
 #include <atomic>
 #include <memory>
@@ -304,6 +307,17 @@ bool EngineSearch::load_nnue_small(const std::string &path) {
   return evaluator_.load_nnue_small(path);
 }
 
+bool EngineSearch::load_syzygy(const std::string &path) {
+  return Syzygy::init(path) > 0;
+}
+
+uint64_t EngineSearch::total_tb_hits() const {
+  uint64_t sum = tbHits_;
+  for (const EngineSearch *helper : helperViews_)
+    sum += helper->tbHits_;
+  return sum;
+}
+
 int EngineSearch::evaluate(const Core::Position &pos) {
   return eval_->evaluate(pos);
 }
@@ -552,6 +566,26 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
         return ttScore;
       if (tte->bound() == BOUND_UPPER && ttScore <= alpha)
         return ttScore;
+    }
+  }
+
+  // Syzygy tablebase WDL probe: with few enough pieces the game-theoretic value
+  // is known exactly, giving an immediate cutoff. Only when the 50-move counter
+  // is reset and no castling rights remain (Fathom's preconditions), never at
+  // the root (ply 0, handled by the DTZ probe) or in a singular verification.
+  if (syzygyActive_ && ply > 0 && !excludedMove.is_ok() &&
+      pos.halfmove_clock() == 0 && pos.castling_rights() == 0 &&
+      Core::popcount(pos.occupancy()) <= syzygyPieces_) {
+    const Syzygy::Wdl wdl = Syzygy::probe_wdl(pos);
+    if (wdl != Syzygy::Wdl::FAIL) {
+      ++tbHits_;
+      const int tbScore = wdl == Syzygy::Wdl::WIN    ? Syzygy::VALUE_TB_WIN
+                          : wdl == Syzygy::Wdl::LOSS ? -Syzygy::VALUE_TB_WIN
+                                                     : 0;
+      // Exact game value, valid at any depth: store so the subtree is skipped.
+      tt_->store(key, tbScore, Core::Move::none(), depth, BOUND_EXACT, ply,
+                 TT_EVAL_NONE);
+      return tbScore;
     }
   }
 
@@ -973,6 +1007,9 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
   seldepth_ = 0;
   stopped_ = false;
   started_ = Clock::now();
+  tbHits_ = 0;
+  syzygyActive_ = Syzygy::active();
+  syzygyPieces_ = Syzygy::max_pieces();
 
   ordering_.clear();
   ordering_.age_history();
@@ -1003,6 +1040,23 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
 
   out.bestMove = rootMoves[0];
   int prevScore = 0;
+
+  // Root DTZ probe (master only -- Fathom's root probe is not thread-safe).
+  // Restrict the search to the tablebase-optimal move so won endgames convert
+  // (DTZ) and drawn/lost ones are defended, while a normal search still
+  // produces a score and PV for the one move.
+  if (syzygyActive_ && threadId_ == 0 &&
+      Core::popcount(root.occupancy()) <= syzygyPieces_) {
+    Core::Move tbMove = Core::Move::none();
+    if (Syzygy::probe_root(root, tbMove) != Syzygy::Wdl::FAIL &&
+        tbMove.is_ok()) {
+      Core::MoveList only;
+      only.push_back(tbMove);
+      rootMoves = only;
+      out.bestMove = tbMove;
+      ++tbHits_;
+    }
+  }
 
   // Build the root accumulator once; the search maintains it incrementally.
   nnueActive_ = eval_->nnue_active();
@@ -1078,6 +1132,7 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
       info.seldepth = seldepth_;
       info.scoreCp = score;
       info.nodes = total_nodes();
+      info.tbHits = total_tb_hits();
       info.elapsedMs = static_cast<int>(
           std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
                                                                 started_)

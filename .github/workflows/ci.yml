@@ -230,8 +230,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install clang-format
         run: sudo apt-get update && sudo apt-get install -y clang-format
-      - name: Check formatting (whole tree)
-        run: git ls-files '*.cpp' '*.h' | xargs clang-format --dry-run --Werror
+      - name: Check formatting (whole tree, excluding vendored code)
+        run: git ls-files '*.cpp' '*.h' | grep -v '^src/syzygy/' | xargs clang-format --dry-run --Werror
 
   clang-tidy:
     name: lint · clang-tidy

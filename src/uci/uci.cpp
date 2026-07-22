@@ -254,6 +254,7 @@ private:
     emit("option name Ponder type check default false");
     emit("option name EvalFile type string default <empty>");
     emit("option name EvalFileSmall type string default <empty>");
+    emit("option name SyzygyPath type string default <empty>");
     emit("option name SmallNetThreshold type spin default 950 min 0 max 5000");
     emit("option name LazyEvalMargin type spin default 0 min 0 max 5000");
     emit("option name ShowStats type check default false");
@@ -367,6 +368,26 @@ private:
         emit("info string EvalFile loaded: " + path);
       } else {
         emit("info string EvalFile load failed: " + path);
+      }
+      return;
+    }
+
+    if (name == "syzygypath") {
+      std::string path = value;
+      if (path.size() >= 2 && path.front() == '"' && path.back() == '"') {
+        path = path.substr(1, path.size() - 2);
+      }
+
+      stop_and_join(true);
+      if (path.empty() || to_lower(path) == "<empty>") {
+        search_.load_syzygy(""); // clears any loaded tables
+        emit("info string SyzygyPath cleared");
+        return;
+      }
+      if (search_.load_syzygy(path)) {
+        emit("info string Syzygy tablebases loaded from: " + path);
+      } else {
+        emit("info string Syzygy: no tablebases found at: " + path);
       }
       return;
     }
@@ -633,8 +654,10 @@ private:
       os << " score cp " << info.scoreCp;
     }
 
-    os << " nodes " << info.nodes << " nps " << nps << " time "
-       << info.elapsedMs << " pv";
+    os << " nodes " << info.nodes << " nps " << nps;
+    if (info.tbHits > 0)
+      os << " tbhits " << info.tbHits;
+    os << " time " << info.elapsedMs << " pv";
     for (int i = 0; i < info.pvLen; ++i) {
       os << ' ' << move_to_uci(info.pv[i]);
     }

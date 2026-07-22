@@ -70,7 +70,12 @@ set(CORE_SOURCES
         src/search/move_ordering.cpp
         src/search/evaluator.cpp
         src/search/search.cpp
+        src/search/syzygy.cpp
         src/nnue/network.cpp
+        # Vendored Syzygy tablebase prober (Fathom, MIT). Built as C++ (see the
+        # LANGUAGE property below) so it uses std::atomic / std::mutex on every
+        # toolchain, avoiding MSVC's opt-in C11 atomics.
+        src/syzygy/tbprobe.c
 )
 
 set(CORE_HEADERS
@@ -86,12 +91,19 @@ set(CORE_HEADERS
         src/search/move_ordering.h
         src/search/evaluator.h
         src/search/search.h
+        src/search/syzygy.h
         src/nnue/halfka.h
         src/nnue/network.h
 )
 
 add_library(chess_core STATIC ${CORE_SOURCES} ${CORE_HEADERS})
+# Build Fathom's C source with the C++ compiler: it then selects std::atomic /
+# std::mutex, which every toolchain supports without extra flags.
+set_source_files_properties(src/syzygy/tbprobe.c PROPERTIES LANGUAGE CXX)
 target_include_directories(chess_core PUBLIC src)
+# Fathom's own sources use quoted includes (tbconfig.h, stdendian.h, tbchess.c)
+# resolved relative to this directory.
+target_include_directories(chess_core PRIVATE src/syzygy)
 
 add_executable(ChessEngine
         app/main.cpp
