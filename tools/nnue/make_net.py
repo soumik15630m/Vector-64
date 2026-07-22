@@ -249,6 +249,14 @@ def stage_train(args: argparse.Namespace, work: Path, data_dir: Path) -> Path:
     device = torch.device(args.device)
     model = STKNet().to(device)
 
+    # Warm-start (RL fine-tuning): load weights from a previous model_float.pt
+    # but keep a fresh optimizer/schedule so the new data drives a clean LR run.
+    # A workdir checkpoint (resume) still wins over this if present.
+    if args.init and not ckpt_path.exists():
+        ick = torch.load(args.init, map_location=device, weights_only=False)
+        model.load_state_dict(ick["state_dict"] if "state_dict" in ick else ick["model"])
+        print(f"[train] warm-started weights from {args.init}")
+
     # Distillation: when --teacher is a 1024-wide float checkpoint, the small
     # student is trained to match the teacher's own eval instead of the
     # dataset label. Both outputs are side-to-move relative, so the teacher
@@ -520,6 +528,8 @@ def main() -> int:
     p.add_argument("--workdir", required=True)
     p.add_argument("--epochs", type=int, default=20, help="20 x 200M ~= bullet's canonical 4B visits")
     p.add_argument("--hidden", type=int, default=1024, choices=(1024, 128), help="net width (128 = small net)")
+    p.add_argument("--init", default=None,
+                   help="warm-start weights from a model_float.pt (RL fine-tune)")
     p.add_argument("--teacher", default=None,
                    help="distill the (128-wide) student from this 1024-wide model_float.pt")
     p.add_argument("--data-dir", default=None,
