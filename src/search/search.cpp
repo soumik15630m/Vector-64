@@ -887,6 +887,7 @@ Result EngineSearch::search(Core::Position root, const Limits &limits,
   for (int i = 1; i < threadCount_; ++i) {
     helpers.emplace_back(new EngineSearch(tt_, eval_));
     helpers.back()->smallNetThreshold_ = smallNetThreshold_;
+    helpers.back()->threadId_ = i;
     helperViews_.push_back(helpers.back().get());
   }
 
@@ -960,9 +961,25 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
   if (nnueActive_)
     eval_->big().refresh(root, accStack_[0]);
 
+  // Lazy-SMP depth staggering: helper threads skip a patterned subset of
+  // iterations so the pool explores a spread of depths and diversifies the
+  // shared TT, instead of every thread redoing the identical search. The
+  // master (threadId_ 0) always searches every depth. (Ethereal-style
+  // skip/phase table.)
+  static constexpr int kSkipSize[16] = {1, 1, 2, 2, 2, 3, 3, 3,
+                                        4, 4, 4, 4, 5, 5, 5, 5};
+  static constexpr int kSkipPhase[16] = {0, 1, 0, 1, 2, 0, 1, 2,
+                                         0, 1, 2, 3, 0, 1, 2, 3};
+
   for (int depth = 1; depth <= limits.maxDepth; ++depth) {
     if (check_stop(limits, callbacks))
       break;
+
+    if (threadId_ > 0 && depth > 1) {
+      const int s = (threadId_ - 1) % 16;
+      if (((depth + kSkipPhase[s]) / kSkipSize[s]) % 2 != 0)
+        continue; // this helper skips this depth
+    }
 
     qProbes_ = 0;
     qHits_ = 0;

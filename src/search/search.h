@@ -98,6 +98,7 @@ private:
 
   size_t hashMb_ = 8;
   int threadCount_ = 1;
+  int threadId_ = 0; // 0 = master; 1..N-1 = lazy-SMP helpers
   uint64_t nodes_ = 0;
   int seldepth_ = 0;
   bool stopped_ = false;
