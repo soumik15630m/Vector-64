@@ -709,12 +709,15 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     if (isQuiet && !isPVNode && !inCheck && movesSearched >= 1 &&
         bestScore > -MATE_BOUND) {
       // Movecount (late-move) pruning: quiets this deep in the list at
-      // shallow depth almost never rescue the node.
+      // shallow depth almost never rescue the node. Once the count is hit,
+      // every remaining picker move is a quiet that also fails it -- stop
+      // emitting them (same moves searched, no wasted scoring/selection).
       if (depth <= 8 && movesSearched >= 3 + depth * depth)
-        continue;
-      // Futility: a quiet move cannot lift a position this far below alpha.
+        break;
+      // Futility: a quiet cannot lift a position this far below alpha. The test
+      // is move-independent, so if it fires the rest of the quiets fail it too.
       if (depth <= 6 && evalForPruning + 100 + 120 * depth <= alpha)
-        continue;
+        break;
     }
 
     // SEE-based pruning: in a non-PV node at shallow depth, skip moves that
