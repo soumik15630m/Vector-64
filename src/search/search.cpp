@@ -109,10 +109,16 @@ int piece_order(Core::PieceType pt) {
 // `idx` (preserving generation order among equal scores) and return
 // it. At cut-nodes only a couple of picks are ever paid for.
 Core::Move stable_pick(Core::MoveList &moves, int *scores, int idx) {
+  const int n = moves.size();
   int best = idx;
-  for (int i = idx + 1; i < moves.size(); ++i) {
-    if (scores[i] > scores[best])
-      best = i;
+  int bestScore = scores[idx];
+  // Branchless max-find: the comparison is data-dependent and unpredictable, so
+  // let it lower to cmov and keep the running best in a register (no reload of
+  // scores[best]). Strict '>' keeps the first among equals -> stable.
+  for (int i = idx + 1; i < n; ++i) {
+    const bool gt = scores[i] > bestScore;
+    best = gt ? i : best;
+    bestScore = gt ? scores[i] : bestScore;
   }
   const Core::Move m = moves.moves[best];
   const int s = scores[best];
