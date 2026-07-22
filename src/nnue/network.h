@@ -263,6 +263,32 @@ inline __m128i dot4x16(const uint8_t *RESTRICT a, const int8_t *RESTRICT w,
   const __m128i r23 = _mm_hadd_epi32(row(2), row(3));
   return _mm_hadd_epi32(r01, r23);
 }
+
+// Same four 16-input rows, but two outputs per 256-bit dpbusd: the shared
+// activation is broadcast into both 128-bit lanes and consecutive output rows
+// are already contiguous in `w`, so this halves the dpbusd count of dot4x16.
+// Exact int32 sums (order-independent), so bit-identical to dot4x16.
+inline __m128i dot4x16w(const uint8_t *RESTRICT a, const int8_t *RESTRICT w,
+                        size_t stride) {
+  const __m256i va = _mm256_broadcastsi128_si256(
+      _mm_loadu_si128(reinterpret_cast<const __m128i *>(a)));
+  const auto pair = [&](size_t j) {
+    const __m256i vw = _mm256_loadu_si256(
+        reinterpret_cast<const __m256i *>(w + 2 * j * stride));
+#if defined(__AVXVNNI__)
+    return _mm256_dpbusd_avx_epi32(_mm256_setzero_si256(), va, vw);
+#else
+    return _mm256_madd_epi16(_mm256_maddubs_epi16(va, vw), _mm256_set1_epi16(1));
+#endif
+  };
+  const __m256i r0 = pair(0); // [out0 (4 i32) | out1 (4 i32)]
+  const __m256i r1 = pair(1); // [out2 (4 i32) | out3 (4 i32)]
+  const __m256i hh = _mm256_hadd_epi32(_mm256_hadd_epi32(r0, r1),
+                                       _mm256_hadd_epi32(r0, r1));
+  // hh lanes: [o0, o2, o0, o2 | o1, o3, o1, o3] -> interleave to [o0,o1,o2,o3].
+  return _mm_unpacklo_epi32(_mm256_castsi256_si128(hh),
+                            _mm256_extracti128_si256(hh, 1));
+}
 #endif
 
 // Both perspectives' fused updates in ONE loop body: two independent
@@ -930,7 +956,7 @@ private:
       alignas(16) int32_t sums[4];
       _mm_store_si128(
           reinterpret_cast<__m128i *>(sums),
-          detail::dot4x16(l1o.data(), &b.l2w[o * Arch::L1], Arch::L1));
+          detail::dot4x16w(l1o.data(), &b.l2w[o * Arch::L1], Arch::L1));
       for (int j = 0; j < 4; ++j)
         l2o[o + j] = detail::clip((b.l2b[o + j] + sums[j]) >> Arch::L2_SHIFT);
     }
