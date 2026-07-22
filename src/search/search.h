@@ -113,6 +113,12 @@ private:
   Core::Move pvTable_[MAX_PLY + 1][MAX_PLY + 1];
   int pvLen_[MAX_PLY + 2] = {};
 
+  // Search stack: the move made at each ply (piece type + destination), used
+  // to key continuation history at the child. NO_PIECE_TYPE marks "no move"
+  // (the root, or after a null move).
+  Core::PieceType ssPiece_[MAX_PLY + 2] = {};
+  Core::Square ssTo_[MAX_PLY + 2] = {};
+
   TranspositionTable ownTt_;
   TranspositionTable *tt_; // ownTt_, or the master's table on helpers
   MoveOrdering ordering_;

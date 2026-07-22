@@ -129,8 +129,10 @@ Core::Move stable_pick(Core::MoveList &moves, int *scores, int idx) {
 class StagedMoves {
 public:
   StagedMoves(Core::Position &pos, const Core::NodeLegality &nl,
-              Core::Move ttMove, const MoveOrdering &ordering, int ply)
-      : pos_(pos), nl_(nl), ttMove_(ttMove), ordering_(ordering), ply_(ply) {
+              Core::Move ttMove, const MoveOrdering &ordering, int ply,
+              Core::PieceType prevPt, Core::Square prevTo)
+      : pos_(pos), nl_(nl), ttMove_(ttMove), ordering_(ordering), ply_(ply),
+        prevPt_(prevPt), prevTo_(prevTo) {
     stage_ = nl.in_check() ? EVASION_GEN : TT_MOVE;
   }
 
@@ -192,7 +194,11 @@ public:
     case QUIET_GEN:
       Core::generate_pseudo_quiets(pos_, list_);
       for (int i = 0; i < list_.size(); ++i) {
-        scores_[i] = ordering_.history_score(pos_.side_to_move(), list_[i]);
+        const Core::Move q = list_[i];
+        scores_[i] =
+            ordering_.history_score(pos_.side_to_move(), q) +
+            ordering_.cont_score(prevPt_, prevTo_, pos_.piece_on(q.from_sq()),
+                                 q.to_sq());
       }
       idx_ = 0;
       stage_ = QUIETS;
@@ -242,6 +248,8 @@ private:
   Core::Move ttMove_;
   const MoveOrdering &ordering_;
   int ply_;
+  Core::PieceType prevPt_;
+  Core::Square prevTo_;
   Stage stage_;
   Core::Move killer1_ = Core::Move::none();
   Core::Move killer2_ = Core::Move::none();
@@ -597,6 +605,7 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     pos.make_null_move(undo);
     if (nnueActive_)
       accStack_[ply + 1] = accStack_[ply]; // null move: no feature change
+    ssPiece_[ply] = Core::NO_PIECE_TYPE; // no continuation context past a null
     const int nullScore = -negamax(pos, depth - 1 - R, -beta, -beta + 1,
                                    ply + 1, limits, callbacks);
     pos.unmake_null_move(undo);
@@ -607,7 +616,13 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
       return is_mate_score(nullScore) ? beta : nullScore;
   }
 
-  StagedMoves picker(pos, nodeLegal, ttMove, ordering_, ply);
+  // Previous move context for continuation history (the reply we are about to
+  // choose is scored on how well it has answered this move before).
+  const Core::PieceType prevPt =
+      ply > 0 ? ssPiece_[ply - 1] : Core::NO_PIECE_TYPE;
+  const Core::Square prevTo = ply > 0 ? ssTo_[ply - 1] : Core::SQ_A1;
+
+  StagedMoves picker(pos, nodeLegal, ttMove, ordering_, ply, prevPt, prevTo);
   const bool pickerEmitsLegal = picker.emits_legal();
 
   const Core::Color us = pos.side_to_move();
@@ -679,6 +694,8 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
         continue;
     }
 
+    const Core::PieceType movedPt = pos.piece_on(move.from_sq());
+
     tt_->prefetch(pos.key_after(move));
     Core::UndoInfo undo{};
     pos.make_move(move, undo);
@@ -688,6 +705,9 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
                           refreshTable_.get());
       PROF_ADD(profUpdCyc_, profUpds_);
     }
+    // Publish this move as the child's continuation context.
+    ssPiece_[ply] = movedPt;
+    ssTo_[ply] = move.to_sq();
 
     const int newDepth = depth - 1 + extension;
     int score;
@@ -699,7 +719,13 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
       int reduction = 0;
       if (depth >= 3 && movesSearched >= 3 && isQuiet && !inCheck) {
         reduction = 1 + (movesSearched >= 6 ? 1 : 0) + (depth >= 8 ? 1 : 0);
-        reduction = std::min(reduction, newDepth - 1);
+        // History-based adjustment: quiets with a strong history + continuation
+        // score are searched shallower less aggressively (and vice versa).
+        const int hist =
+            ordering_.history_score(us, move) +
+            ordering_.cont_score(prevPt, prevTo, movedPt, move.to_sq());
+        reduction -= std::clamp(hist / 8192, -2, 2);
+        reduction = std::clamp(reduction, 0, newDepth - 1);
       }
 
       score = -negamax(pos, newDepth - reduction, -alpha - 1, -alpha, ply + 1,
@@ -741,8 +767,13 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
         if (isQuiet) {
           ordering_.update_killers(ply, move);
           ordering_.update_history(us, move, depth);
-          for (int q = 0; q < quietsCount; ++q)
-            ordering_.update_history_malus(us, quietsTried[q], depth);
+          ordering_.update_cont(prevPt, prevTo, movedPt, move.to_sq(), depth);
+          for (int q = 0; q < quietsCount; ++q) {
+            const Core::Move qm = quietsTried[q];
+            ordering_.update_history_malus(us, qm, depth);
+            ordering_.update_cont_malus(
+                prevPt, prevTo, pos.piece_on(qm.from_sq()), qm.to_sq(), depth);
+          }
         } else if (move.is_capture()) {
           const Core::PieceType victim =
               move.is_en_passant() ? Core::PAWN : pos.piece_on(move.to_sq());
@@ -814,6 +845,8 @@ int EngineSearch::search_root(Core::Position &root, Core::MoveList &rootMoves,
   for (int i = 0; i < rootMoves.size(); ++i) {
     const Core::Move move = rootMoves[i];
 
+    const Core::PieceType movedPt = root.piece_on(move.from_sq());
+
     tt_->prefetch(root.key_after(move));
     Core::UndoInfo undo{};
     root.make_move(move, undo);
@@ -823,6 +856,9 @@ int EngineSearch::search_root(Core::Position &root, Core::MoveList &rootMoves,
                           refreshTable_.get());
       PROF_ADD(profUpdCyc_, profUpds_);
     }
+    // Publish the root move as the continuation context for its children.
+    ssPiece_[0] = movedPt;
+    ssTo_[0] = move.to_sq();
 
     const int newDepth = depth - 1 + extension;
     int score;
