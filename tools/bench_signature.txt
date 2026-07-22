@@ -1,0 +1,12 @@
+# Deterministic search fingerprint -- the single source of truth for the bench
+# signature. The engine's node count for `bench <DEPTH>` at 1 thread / 8 MB hash
+# is a fixed function of the search tree, identical across gcc / clang / MSVC.
+#
+# Both consumers read THIS file, so the value can never drift between them:
+#   - tools/bench_signature.sh                  (the CTest `search.bench_signature`)
+#   - tests/python/test_uci_behavior.py         (the `uci . search limits` CI job)
+#
+# If an INTENTIONAL search change moves the count, regenerate in the same commit:
+#   bash tools/update_bench_signature.sh <path-to-ChessEngine>
+DEPTH=13
+NODES=5253789

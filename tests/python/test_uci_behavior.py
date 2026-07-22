@@ -164,14 +164,27 @@ def test_nodes_limit_is_respected(uci) -> None:
     assert node_counts and max(node_counts) < 60000
 
 
+def _bench_signature() -> tuple[int, int]:
+    """The (depth, nodes) fingerprint from the single source of truth."""
+    path = pathlib.Path(__file__).resolve().parents[2] / "tools" / "bench_signature.txt"
+    vals: dict[str, str] = {}
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            vals[key.strip()] = value.strip()
+    return int(vals["DEPTH"]), int(vals["NODES"])
+
+
 def test_bench_signature_is_deterministic(uci) -> None:
+    depth, expected = _bench_signature()
     uci.send("setoption name Threads value 1")
     uci.send("setoption name Hash value 8")
-    uci.send("bench 13")
-    line, _ = uci.collect_until(lambda ln: "bench depth 13" in ln, timeout=30)
+    uci.send(f"bench {depth}")
+    line, _ = uci.collect_until(lambda ln: f"bench depth {depth}" in ln, timeout=30)
     assert line is not None
     nodes = int(line.split("nodes")[1].split()[0])
-    assert nodes == 5253789
+    assert nodes == expected
 
 
 def test_ucinewgame_then_search(uci) -> None:
