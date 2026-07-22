@@ -278,13 +278,14 @@ inline __m128i dot4x16w(const uint8_t *RESTRICT a, const int8_t *RESTRICT w,
 #if defined(__AVXVNNI__)
     return _mm256_dpbusd_avx_epi32(_mm256_setzero_si256(), va, vw);
 #else
-    return _mm256_madd_epi16(_mm256_maddubs_epi16(va, vw), _mm256_set1_epi16(1));
+    return _mm256_madd_epi16(_mm256_maddubs_epi16(va, vw),
+                             _mm256_set1_epi16(1));
 #endif
   };
   const __m256i r0 = pair(0); // [out0 (4 i32) | out1 (4 i32)]
   const __m256i r1 = pair(1); // [out2 (4 i32) | out3 (4 i32)]
-  const __m256i hh = _mm256_hadd_epi32(_mm256_hadd_epi32(r0, r1),
-                                       _mm256_hadd_epi32(r0, r1));
+  const __m256i hh =
+      _mm256_hadd_epi32(_mm256_hadd_epi32(r0, r1), _mm256_hadd_epi32(r0, r1));
   // hh lanes: [o0, o2, o0, o2 | o1, o3, o1, o3] -> interleave to [o0,o1,o2,o3].
   return _mm_unpacklo_epi32(_mm256_castsi256_si128(hh),
                             _mm256_extracti128_si256(hh, 1));
