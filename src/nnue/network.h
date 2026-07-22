@@ -302,6 +302,32 @@ inline void acc_fused2(int16_t *RESTRICT dstW, const int16_t *RESTRICT srcW,
     }
     return;
   }
+  // Second fast path: a capture (incl. en passant) -- one added, two removed
+  // features per perspective (from, captured -> to). Same modular reasoning.
+  if (naW == 1 && nrW == 2 && naB == 1 && nrB == 2) {
+    const int16_t *RESTRICT aw = addW[0];
+    const int16_t *RESTRICT sw0 = subW[0];
+    const int16_t *RESTRICT sw1 = subW[1];
+    const int16_t *RESTRICT ab = addB[0];
+    const int16_t *RESTRICT sb0 = subB[0];
+    const int16_t *RESTRICT sb1 = subB[1];
+    for (int h = 0; h < H; h += 16) {
+      const auto ld = [](const int16_t *p) {
+        return _mm256_loadu_si256(reinterpret_cast<const __m256i *>(p));
+      };
+      const __m256i v = _mm256_add_epi16(
+          _mm256_sub_epi16(_mm256_sub_epi16(ld(srcW + h), ld(sw0 + h)),
+                           ld(sw1 + h)),
+          ld(aw + h));
+      const __m256i u = _mm256_add_epi16(
+          _mm256_sub_epi16(_mm256_sub_epi16(ld(srcB + h), ld(sb0 + h)),
+                           ld(sb1 + h)),
+          ld(ab + h));
+      _mm256_storeu_si256(reinterpret_cast<__m256i *>(dstW + h), v);
+      _mm256_storeu_si256(reinterpret_cast<__m256i *>(dstB + h), u);
+    }
+    return;
+  }
   for (int h = 0; h < H; h += 16) {
     __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(srcW + h));
     __m256i u = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(srcB + h));
