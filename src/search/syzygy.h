@@ -33,10 +33,13 @@ bool active();    // max_pieces() > 0
 // cannot answer (non-zero rule50, castling rights, or a missing file).
 Wdl probe_wdl(const Core::Position &pos);
 
-// DTZ root probe (NOT thread-safe -- master thread only, once per search). On
-// success sets `best` to the tablebase-optimal move and returns its WDL; on
-// FAIL, `best` is left untouched.
-Wdl probe_root(Core::Position &pos, Core::Move &best);
+// DTZ root ranking (NOT thread-safe -- master thread only, once per search).
+// Appends every root move that preserves the best tablebase outcome -- all
+// equally-optimal moves, so the search still chooses naturally among them --
+// to `out`. Returns the number appended; 0 means the root could not be ranked
+// (leave the move list untouched). Falls back to WDL ranking when DTZ tables
+// are missing.
+int probe_root_moves(Core::Position &pos, Core::MoveList &out);
 
 } // namespace Search::Syzygy
 

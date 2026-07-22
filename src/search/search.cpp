@@ -1041,19 +1041,17 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
   out.bestMove = rootMoves[0];
   int prevScore = 0;
 
-  // Root DTZ probe (master only -- Fathom's root probe is not thread-safe).
-  // Restrict the search to the tablebase-optimal move so won endgames convert
-  // (DTZ) and drawn/lost ones are defended, while a normal search still
-  // produces a score and PV for the one move.
+  // Root DTZ ranking (master only -- Fathom's root probe is not thread-safe).
+  // Restrict the search to the tablebase-optimal root moves so won endgames
+  // convert (DTZ) and drawn/lost ones are defended -- but keep every
+  // equally-optimal move, so the normal search still chooses naturally among
+  // them and reports a real score and PV.
   if (syzygyActive_ && threadId_ == 0 &&
       Core::popcount(root.occupancy()) <= syzygyPieces_) {
-    Core::Move tbMove = Core::Move::none();
-    if (Syzygy::probe_root(root, tbMove) != Syzygy::Wdl::FAIL &&
-        tbMove.is_ok()) {
-      Core::MoveList only;
-      only.push_back(tbMove);
-      rootMoves = only;
-      out.bestMove = tbMove;
+    Core::MoveList tbRoot;
+    if (Syzygy::probe_root_moves(root, tbRoot) > 0) {
+      rootMoves = tbRoot;
+      out.bestMove = rootMoves[0];
       ++tbHits_;
     }
   }

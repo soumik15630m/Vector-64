@@ -6,6 +6,10 @@
 // (tbconfig.h) resolve via the src/syzygy include directory added in CMake.
 #include "syzygy/tbprobe.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <memory>
+
 namespace Search::Syzygy {
 namespace {
 
@@ -33,6 +37,30 @@ Wdl wdl_of(unsigned raw) {
   }
 }
 
+// Find the legal move matching Fathom's (from, to, promotion) triple, so
+// castling and en passant carry the correct flags. Move::none() if no match.
+Core::Move match_legal(const Core::MoveList &legal, unsigned from, unsigned to,
+                       unsigned promo) {
+  for (int i = 0; i < legal.size(); ++i) {
+    const Core::Move m = legal[i];
+    if (static_cast<unsigned>(m.from_sq()) != from ||
+        static_cast<unsigned>(m.to_sq()) != to)
+      continue;
+    if (promo == TB_PROMOTES_NONE) {
+      if (!m.is_promotion())
+        return m;
+      continue;
+    }
+    const Core::PieceType want = promo == TB_PROMOTES_QUEEN    ? Core::QUEEN
+                                 : promo == TB_PROMOTES_ROOK   ? Core::ROOK
+                                 : promo == TB_PROMOTES_BISHOP ? Core::BISHOP
+                                                               : Core::KNIGHT;
+    if (m.is_promotion() && m.promotion_type() == want)
+      return m;
+  }
+  return Core::Move::none();
+}
+
 } // namespace
 
 int init(const std::string &path) {
@@ -58,47 +86,55 @@ Wdl probe_wdl(const Core::Position &pos) {
   return res == TB_RESULT_FAILED ? Wdl::FAIL : wdl_of(res);
 }
 
-Wdl probe_root(Core::Position &pos, Core::Move &best) {
-  const unsigned res = tb_probe_root(
-      pos.pieces(Core::WHITE), pos.pieces(Core::BLACK), pos.pieces(Core::KING),
-      pos.pieces(Core::QUEEN), pos.pieces(Core::ROOK), pos.pieces(Core::BISHOP),
-      pos.pieces(Core::KNIGHT), pos.pieces(Core::PAWN),
-      static_cast<unsigned>(pos.halfmove_clock()), castling_for_fathom(pos),
-      ep_for_fathom(pos), pos.side_to_move() == Core::WHITE, nullptr);
-  if (res == TB_RESULT_FAILED || res == TB_RESULT_CHECKMATE ||
-      res == TB_RESULT_STALEMATE)
-    return Wdl::FAIL;
+int probe_root_moves(Core::Position &pos, Core::MoveList &out) {
+  // TbRootMoves is large (~100 KB); keep it off the stack.
+  auto results = std::make_unique<TbRootMoves>();
+  const uint64_t white = pos.pieces(Core::WHITE);
+  const uint64_t black = pos.pieces(Core::BLACK);
+  const uint64_t kings = pos.pieces(Core::KING);
+  const uint64_t queens = pos.pieces(Core::QUEEN);
+  const uint64_t rooks = pos.pieces(Core::ROOK);
+  const uint64_t bishops = pos.pieces(Core::BISHOP);
+  const uint64_t knights = pos.pieces(Core::KNIGHT);
+  const uint64_t pawns = pos.pieces(Core::PAWN);
+  const unsigned rule50 = static_cast<unsigned>(pos.halfmove_clock());
+  const unsigned castling = castling_for_fathom(pos);
+  const unsigned ep = ep_for_fathom(pos);
+  const bool turn = pos.side_to_move() == Core::WHITE;
 
-  const unsigned from = TB_GET_FROM(res);
-  const unsigned to = TB_GET_TO(res);
-  const unsigned promo = TB_GET_PROMOTES(res);
+  // DTZ ranking accounts for the 50-move rule; fall back to WDL ranking when
+  // the DTZ tables are incomplete.
+  int ok = tb_probe_root_dtz(white, black, kings, queens, rooks, bishops,
+                             knights, pawns, rule50, castling, ep, turn,
+                             /*hasRepeated=*/false, /*useRule50=*/true,
+                             results.get());
+  if (!ok)
+    ok = tb_probe_root_wdl(white, black, kings, queens, rooks, bishops, knights,
+                           pawns, rule50, castling, ep, turn,
+                           /*useRule50=*/true, results.get());
+  if (!ok || results->size == 0)
+    return 0;
 
-  // Match Fathom's (from, to, promotion) to a real legal move so castling and
-  // en passant carry the correct move flags.
+  // Keep every move that ties the best rank -- all equally-optimal outcomes.
+  int32_t bestRank = results->moves[0].tbRank;
+  for (unsigned i = 1; i < results->size; ++i)
+    bestRank = std::max(bestRank, results->moves[i].tbRank);
+
   Core::MoveList legal;
   Core::generate_legal_moves(pos, legal);
-  for (int i = 0; i < legal.size(); ++i) {
-    const Core::Move m = legal[i];
-    if (static_cast<unsigned>(m.from_sq()) != from ||
-        static_cast<unsigned>(m.to_sq()) != to)
+  int count = 0;
+  for (unsigned i = 0; i < results->size; ++i) {
+    if (results->moves[i].tbRank != bestRank)
       continue;
-    if (promo == TB_PROMOTES_NONE) {
-      if (!m.is_promotion()) {
-        best = m;
-        return wdl_of(TB_GET_WDL(res));
-      }
-      continue;
-    }
-    const Core::PieceType want = promo == TB_PROMOTES_QUEEN    ? Core::QUEEN
-                                 : promo == TB_PROMOTES_ROOK   ? Core::ROOK
-                                 : promo == TB_PROMOTES_BISHOP ? Core::BISHOP
-                                                               : Core::KNIGHT;
-    if (m.is_promotion() && m.promotion_type() == want) {
-      best = m;
-      return wdl_of(TB_GET_WDL(res));
+    const TbMove tm = results->moves[i].move;
+    const Core::Move m = match_legal(legal, TB_MOVE_FROM(tm), TB_MOVE_TO(tm),
+                                     TB_MOVE_PROMOTES(tm));
+    if (m.is_ok()) {
+      out.push_back(m);
+      ++count;
     }
   }
-  return Wdl::FAIL; // no legal move matched (should not happen)
+  return count;
 }
 
 } // namespace Search::Syzygy
