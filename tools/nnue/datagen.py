@@ -203,9 +203,11 @@ def main() -> int:
         work.put(o)
 
     lock = threading.Lock()
-    counters = {"games": 0, "positions": 0}
+    counters = {"games": 0, "positions": 0, "w": 0, "d": 0, "l": 0}
     fh = open(args.out, "w", encoding="utf-8")
     t0 = time.time()
+    print(f"[datagen] {args.games} games @ {args.nodes} nodes, {args.concurrency} "
+          f"workers, lambda={args.lam}, net={os.path.basename(args.net)}", flush=True)
 
     def worker() -> None:
         eng = Engine(args.engine, args.net, args.uci)
@@ -227,12 +229,15 @@ def main() -> int:
                     buf.clear()
                 with lock:
                     counters["games"] += 1
+                    counters["w" if wdl == 1.0 else "l" if wdl == 0.0 else "d"] += 1
                     g = counters["games"]
-                    if g % 200 == 0:
+                    if g % 500 == 0:
                         el = time.time() - t0
-                        print(f"  games {g}/{args.games}  positions "
-                              f"{counters['positions']}  {g/max(el,1e-9):.1f} g/s",
-                              flush=True)
+                        rate = g / max(el, 1e-9)
+                        eta = (args.games - g) / max(rate, 1e-9) / 60.0
+                        print(f"  {g}/{args.games} games  "
+                              f"{counters['positions'] + len(buf)} pos  "
+                              f"{rate:.1f} g/s  eta {eta:.1f} min", flush=True)
         finally:
             if buf:
                 with lock:
@@ -246,8 +251,13 @@ def main() -> int:
     for t in threads:
         t.join()
     fh.close()
-    print(f"DATAGEN DONE: {counters['games']} games, {counters['positions']} "
-          f"positions -> {args.out}  ({time.time()-t0:.1f}s)")
+    g = max(counters["games"], 1)
+    el = time.time() - t0
+    print(f"DATAGEN DONE  {counters['games']} games  {counters['positions']} "
+          f"positions  ({counters['positions']/g:.1f} pos/game)  {el/60:.1f} min "
+          f"({g/max(el,1e-9):.1f} g/s)")
+    print(f"  result (white pov): {100*counters['w']/g:.0f}% W  "
+          f"{100*counters['d']/g:.0f}% D  {100*counters['l']/g:.0f}% L  ->  {args.out}")
     return 0
 
 

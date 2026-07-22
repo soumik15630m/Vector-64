@@ -84,18 +84,22 @@ def main() -> int:
         gdir = root / f"gen{gen:03d}"
         gdir.mkdir(exist_ok=True)
         data = gdir / "data.txt"
-        t0 = time.time()
-        print(f"\n===== generation {gen}  (best: {Path(state['best_net']).name}) =====")
+        n_acc = sum(1 for h in state["history"] if h["accepted"])
+        print(f"\n{'='*66}\n  GENERATION {gen}   best={Path(state['best_net']).name}"
+              f"   accepted so far: {n_acc}/{len(state['history'])}\n{'='*66}")
 
         # 1) self-play data from the current best net
+        t = time.time()
         if not data.exists() or data.stat().st_size == 0:
             run([py, str(HERE / "datagen.py"), "--engine", args.engine,
                  "--net", state["best_net"], "--games", str(args.games),
                  "--nodes", str(args.dg_nodes), "--lam", str(args.lam),
                  "--concurrency", str(args.concurrency), "--seed", str(1000 + gen),
                  "--out", str(data)], log)
+        t_dg = (time.time() - t) / 60
 
         # 2) fine-tune (warm-start from the best net)
+        t = time.time()
         new_net = gdir / "stk_halfka_1024.nnue"
         if not new_net.exists():
             cmd = [py, str(HERE / "make_net.py"), "--input", str(data),
@@ -104,29 +108,44 @@ def main() -> int:
             if args.device:
                 cmd += ["--device", args.device]
             run(cmd, log)
+        t_tr = (time.time() - t) / 60
 
         # 3) SPRT the new net vs the current best (different seed than datagen)
+        t = time.time()
         out = run([py, str(HERE / "match.py"), "--engine", args.engine,
                    "--base-engine", args.engine, "--net", str(new_net),
                    "--base-net", state["best_net"], "--sprt", "0", "5",
                    "--games", str(args.sprt_games), "--nodes", str(args.sprt_nodes),
                    "--concurrency", str(args.concurrency),
                    "--seed", str(90000 + gen)], log, allow_fail=True)
+        t_sprt = (time.time() - t) / 60
 
         accepted = "H1 accepted" in out
-        entry = {"gen": gen, "accepted": accepted,
-                 "net": str(new_net.resolve()), "minutes": round((time.time()-t0)/60, 1)}
+        elo = "?"
+        for ln in reversed(out.splitlines()):
+            if "elo" in ln and "+/-" in ln:
+                try:
+                    elo = ln.split("elo")[1].split("+/-")[0].strip()
+                except IndexError:
+                    pass
+                break
+        entry = {"gen": gen, "accepted": accepted, "elo": elo,
+                 "net": str(new_net.resolve()),
+                 "min": {"datagen": round(t_dg, 1), "train": round(t_tr, 1),
+                         "sprt": round(t_sprt, 1)}}
         if accepted:
             state["best_net"] = str(new_net.resolve())
             state["best_float"] = str((gdir / "model_float.pt").resolve())
-            print(f"  ACCEPTED gen {gen} -> new best")
-        else:
-            print(f"  rejected gen {gen} (best unchanged); fresh data next round")
         state["history"].append(entry)
         state["gen"] = gen + 1
         state_path.write_text(json.dumps(state, indent=2))
 
-    print("\nRL loop complete. Best net:", state["best_net"])
+        verdict = "ACCEPTED -> new best" if accepted else "rejected (best unchanged)"
+        print(f"\n  gen {gen} {verdict}   elo {elo}   "
+              f"[datagen {t_dg:.1f}m  train {t_tr:.1f}m  sprt {t_sprt:.1f}m]")
+
+    print(f"\nRL loop complete. Accepted {sum(1 for h in state['history'] if h['accepted'])}"
+          f"/{len(state['history'])} generations. Best net: {state['best_net']}")
     log.close()
     return 0
 
