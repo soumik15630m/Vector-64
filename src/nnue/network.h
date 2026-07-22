@@ -277,6 +277,31 @@ inline void acc_fused2(int16_t *RESTRICT dstW, const int16_t *RESTRICT srcW,
                        const int16_t *const *addB, int naB,
                        const int16_t *const *subB, int nrB) {
 #if defined(__AVX2__)
+  // Fast path for the overwhelmingly common quiet move: exactly one added and
+  // one removed feature per perspective. Straight-line, no data-dependent inner
+  // loops -- bit-identical since int16 add/sub is modular and associative
+  // (src - sub + add == src + add - sub mod 2^16).
+  if (naW == 1 && nrW == 1 && naB == 1 && nrB == 1) {
+    const int16_t *RESTRICT aw = addW[0];
+    const int16_t *RESTRICT sw = subW[0];
+    const int16_t *RESTRICT ab = addB[0];
+    const int16_t *RESTRICT sb = subB[0];
+    for (int h = 0; h < H; h += 16) {
+      const __m256i v = _mm256_add_epi16(
+          _mm256_sub_epi16(
+              _mm256_loadu_si256(reinterpret_cast<const __m256i *>(srcW + h)),
+              _mm256_loadu_si256(reinterpret_cast<const __m256i *>(sw + h))),
+          _mm256_loadu_si256(reinterpret_cast<const __m256i *>(aw + h)));
+      const __m256i u = _mm256_add_epi16(
+          _mm256_sub_epi16(
+              _mm256_loadu_si256(reinterpret_cast<const __m256i *>(srcB + h)),
+              _mm256_loadu_si256(reinterpret_cast<const __m256i *>(sb + h))),
+          _mm256_loadu_si256(reinterpret_cast<const __m256i *>(ab + h)));
+      _mm256_storeu_si256(reinterpret_cast<__m256i *>(dstW + h), v);
+      _mm256_storeu_si256(reinterpret_cast<__m256i *>(dstB + h), u);
+    }
+    return;
+  }
   for (int h = 0; h < H; h += 16) {
     __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(srcW + h));
     __m256i u = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(srcB + h));
