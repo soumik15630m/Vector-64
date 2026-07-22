@@ -54,6 +54,7 @@ public:
   void set_hash_mb(size_t hashMb);
   void set_threads(int threads);
   void set_small_net_threshold(int cp);
+  void set_lazy_eval_margin(int cp);
   void clear();
   bool load_nnue(const std::string &path);
   bool load_nnue_small(const std::string &path);
@@ -86,7 +87,8 @@ private:
   int eval_pos(const Core::Position &pos, int ply);
 
   int negamax(Core::Position &pos, int depth, int alpha, int beta, int ply,
-              const Limits &limits, const Callbacks &callbacks);
+              const Limits &limits, const Callbacks &callbacks,
+              Core::Move excludedMove = Core::Move::none());
 
   int quiescence(Core::Position &pos, int alpha, int beta, int ply,
                  const Limits &limits, const Callbacks &callbacks);
@@ -97,6 +99,7 @@ private:
 
   size_t hashMb_ = 8;
   int threadCount_ = 1;
+  int threadId_ = 0; // 0 = master; 1..N-1 = lazy-SMP helpers
   uint64_t nodes_ = 0;
   int seldepth_ = 0;
   bool stopped_ = false;
@@ -109,6 +112,12 @@ private:
 
   Core::Move pvTable_[MAX_PLY + 1][MAX_PLY + 1];
   int pvLen_[MAX_PLY + 2] = {};
+
+  // Search stack: the move made at each ply (piece type + destination), used
+  // to key continuation history at the child. NO_PIECE_TYPE marks "no move"
+  // (the root, or after a null move).
+  Core::PieceType ssPiece_[MAX_PLY + 2] = {};
+  Core::Square ssTo_[MAX_PLY + 2] = {};
 
   TranspositionTable ownTt_;
   TranspositionTable *tt_; // ownTt_, or the master's table on helpers
@@ -127,6 +136,9 @@ private:
   bool smallActive_ = false;
   // Dual-net gate: |material+psqt| above this (cp) takes the small-net eval.
   int smallNetThreshold_ = 950;
+  // Lazy eval: |PSQT side-output| above this (cp) skips the big net's dense
+  // layers. 0 = off (always full forward). Tuned via UCI / SPRT.
+  int lazyEvalMargin_ = 0;
 
 #ifdef ENGINE_PROF
   // Cycle attribution for the hot-path audit (rdtsc; build with -DENGINE_PROF).

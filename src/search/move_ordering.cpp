@@ -46,6 +46,15 @@ void MoveOrdering::clear() {
   }
   std::fill(&history_[0][0][0],
             &history_[0][0][0] + static_cast<int>(Core::COLOR_NB) * 64 * 64, 0);
+  std::fill(&captureHist_[0][0][0][0],
+            &captureHist_[0][0][0][0] + static_cast<size_t>(Core::COLOR_NB) *
+                                            Core::PIECE_TYPE_NB * 64 *
+                                            Core::PIECE_TYPE_NB,
+            0);
+  std::fill(&contHist_[0][0][0][0],
+            &contHist_[0][0][0][0] + static_cast<size_t>(Core::PIECE_TYPE_NB) *
+                                         64 * Core::PIECE_TYPE_NB * 64,
+            0);
 }
 
 void MoveOrdering::age_history() {
@@ -83,6 +92,38 @@ void MoveOrdering::update_history_malus(Core::Color side, Core::Move move,
   const int malus = depth * depth;
   int &score = history_[side][move.from_sq()][move.to_sq()];
   score = std::max(-32767, score - malus);
+}
+
+void MoveOrdering::update_capture(Core::Color side, Core::PieceType attacker,
+                                  Core::Square to, Core::PieceType victim,
+                                  int depth) {
+  int &score = captureHist_[side][attacker][to][victim];
+  score = std::min(32767, score + depth * depth);
+}
+
+void MoveOrdering::update_capture_malus(Core::Color side,
+                                        Core::PieceType attacker,
+                                        Core::Square to, Core::PieceType victim,
+                                        int depth) {
+  int &score = captureHist_[side][attacker][to][victim];
+  score = std::max(-32767, score - depth * depth);
+}
+
+void MoveOrdering::update_cont(Core::PieceType prevPt, Core::Square prevTo,
+                               Core::PieceType pt, Core::Square to, int depth) {
+  if (prevPt == Core::NO_PIECE_TYPE)
+    return;
+  int &score = contHist_[prevPt][prevTo][pt][to];
+  score = std::min(32767, score + depth * depth);
+}
+
+void MoveOrdering::update_cont_malus(Core::PieceType prevPt,
+                                     Core::Square prevTo, Core::PieceType pt,
+                                     Core::Square to, int depth) {
+  if (prevPt == Core::NO_PIECE_TYPE)
+    return;
+  int &score = contHist_[prevPt][prevTo][pt][to];
+  score = std::max(-32767, score - depth * depth);
 }
 
 int MoveOrdering::score_move(const Core::Position &pos, Core::Move move,

@@ -129,8 +129,10 @@ Core::Move stable_pick(Core::MoveList &moves, int *scores, int idx) {
 class StagedMoves {
 public:
   StagedMoves(Core::Position &pos, const Core::NodeLegality &nl,
-              Core::Move ttMove, const MoveOrdering &ordering, int ply)
-      : pos_(pos), nl_(nl), ttMove_(ttMove), ordering_(ordering), ply_(ply) {
+              Core::Move ttMove, const MoveOrdering &ordering, int ply,
+              Core::PieceType prevPt, Core::Square prevTo)
+      : pos_(pos), nl_(nl), ttMove_(ttMove), ordering_(ordering), ply_(ply),
+        prevPt_(prevPt), prevTo_(prevTo) {
     stage_ = nl.in_check() ? EVASION_GEN : TT_MOVE;
   }
 
@@ -147,12 +149,16 @@ public:
       Core::generate_pseudo_captures(pos_, list_);
       for (int i = 0; i < list_.size(); ++i) {
         const Core::Move m = list_[i];
+        const Core::PieceType attacker = pos_.piece_on(m.from_sq());
         const Core::PieceType victim =
             m.is_en_passant() ? Core::PAWN : pos_.piece_on(m.to_sq());
-        int s =
-            16 * piece_order(victim) - piece_order(pos_.piece_on(m.from_sq()));
+        // MVV-LVA base (kept large so it dominates), refined by how well
+        // this exact capture has historically done.
+        int s = 4096 * (16 * piece_order(victim) - piece_order(attacker));
         if (m.is_promotion())
-          s += 16 * piece_order(m.promotion_type());
+          s += 4096 * 16 * piece_order(m.promotion_type());
+        s += ordering_.capture_score(pos_.side_to_move(), attacker, m.to_sq(),
+                                     victim);
         scores_[i] = s;
       }
       idx_ = 0;
@@ -188,7 +194,11 @@ public:
     case QUIET_GEN:
       Core::generate_pseudo_quiets(pos_, list_);
       for (int i = 0; i < list_.size(); ++i) {
-        scores_[i] = ordering_.history_score(pos_.side_to_move(), list_[i]);
+        const Core::Move q = list_[i];
+        scores_[i] =
+            ordering_.history_score(pos_.side_to_move(), q) +
+            ordering_.cont_score(prevPt_, prevTo_, pos_.piece_on(q.from_sq()),
+                                 q.to_sq());
       }
       idx_ = 0;
       stage_ = QUIETS;
@@ -238,6 +248,8 @@ private:
   Core::Move ttMove_;
   const MoveOrdering &ordering_;
   int ply_;
+  Core::PieceType prevPt_;
+  Core::Square prevTo_;
   Stage stage_;
   Core::Move killer1_ = Core::Move::none();
   Core::Move killer2_ = Core::Move::none();
@@ -275,6 +287,10 @@ void EngineSearch::set_small_net_threshold(int cp) {
   smallNetThreshold_ = std::clamp(cp, 0, 5000);
 }
 
+void EngineSearch::set_lazy_eval_margin(int cp) {
+  lazyEvalMargin_ = std::clamp(cp, 0, 5000);
+}
+
 void EngineSearch::clear() {
   tt_->clear();
   ordering_.clear();
@@ -299,21 +315,29 @@ int EngineSearch::evaluate(const Core::Position &pos) {
 
 int EngineSearch::eval_pos(const Core::Position &pos, int ply) {
   if (nnueActive_) {
-    if (smallActive_) {
-      const int sign = pos.side_to_move() == Core::WHITE ? 1 : -1;
-      const int simple = sign * (pos.material_wb() + pos.psqt_wb());
-      if (simple > smallNetThreshold_ || simple < -smallNetThreshold_) {
-        // On-demand small eval: a couple of finny diffs, and the big
-        // accumulator stays unresolved for this whole subtree branch.
-        PROF_T0;
-        eval_->small().refresh_perspective(pos, Core::WHITE, smallScratch_,
-                                           *smallRefreshTable_);
-        eval_->small().refresh_perspective(pos, Core::BLACK, smallScratch_,
-                                           *smallRefreshTable_);
-        const int v = eval_->small().evaluate(pos, smallScratch_);
-        PROF_ADD(profSmallCyc_, profSmallEvals_);
-        return v;
-      }
+    const int sign = pos.side_to_move() == Core::WHITE ? 1 : -1;
+    const int simple = sign * (pos.material_wb() + pos.psqt_wb());
+
+    // Lazy eval: when the O(1) material+psqt estimate already calls the
+    // position clearly decided, skip the NNUE forward entirely and return the
+    // cheap estimate. (Gated on the hand-coded material term, not the net's
+    // PSQT side-output, which does not reliably encode material.)
+    if (lazyEvalMargin_ > 0 &&
+        (simple > lazyEvalMargin_ || simple < -lazyEvalMargin_))
+      return simple;
+
+    if (smallActive_ &&
+        (simple > smallNetThreshold_ || simple < -smallNetThreshold_)) {
+      // On-demand small eval: a couple of finny diffs, and the big
+      // accumulator stays unresolved for this whole subtree branch.
+      PROF_T0;
+      eval_->small().refresh_perspective(pos, Core::WHITE, smallScratch_,
+                                         *smallRefreshTable_);
+      eval_->small().refresh_perspective(pos, Core::BLACK, smallScratch_,
+                                         *smallRefreshTable_);
+      const int v = eval_->small().evaluate(pos, smallScratch_);
+      PROF_ADD(profSmallCyc_, profSmallEvals_);
+      return v;
     }
     PROF_T0;
     const int v = eval_->evaluate(pos, accStack_[ply]);
@@ -487,7 +511,8 @@ HOT_FN int EngineSearch::quiescence(Core::Position &pos, int alpha, int beta,
 
 HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
                                  int beta, int ply, const Limits &limits,
-                                 const Callbacks &callbacks) {
+                                 const Callbacks &callbacks,
+                                 Core::Move excludedMove) {
   if (depth <= 0)
     return quiescence(pos, alpha, beta, ply, limits, callbacks);
 
@@ -516,7 +541,9 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     nHits_++;
     ttMove = tte->move();
 
-    if (!isPVNode && tte->depth >= depth) {
+    // No TT cutoff during a singular verification search: it must actually
+    // search the alternatives to the excluded move.
+    if (!isPVNode && !excludedMove.is_ok() && tte->depth >= depth) {
       const int ttScore = TranspositionTable::scoreFromTT(tte->score, ply);
 
       if (tte->bound() == BOUND_EXACT)
@@ -561,22 +588,24 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
 
   // Reverse futility pruning: far enough above beta that a shallow
   // search is extremely unlikely to fall back under it.
-  if (!isPVNode && !inCheck && depth <= 8 && beta < MATE_BOUND &&
-      evalForPruning - 80 * depth >= beta) {
+  if (!isPVNode && !inCheck && !excludedMove.is_ok() && depth <= 8 &&
+      beta < MATE_BOUND && evalForPruning - 80 * depth >= beta) {
     return evalForPruning;
   }
 
   // Null Move Pruning: give the opponent a free move; if our position
   // still beats beta, trust the fail-high. Skipped without non-pawn
-  // material where zugzwang would make it unsound.
-  if (!isPVNode && !inCheck && depth >= 3 && evalForPruning >= beta &&
-      pos.has_non_pawn_material(pos.side_to_move())) {
+  // material where zugzwang would make it unsound, and during a singular
+  // verification search.
+  if (!isPVNode && !inCheck && !excludedMove.is_ok() && depth >= 3 &&
+      evalForPruning >= beta && pos.has_non_pawn_material(pos.side_to_move())) {
     const int R = 3 + depth / 6;
 
     Core::UndoInfo undo;
     pos.make_null_move(undo);
     if (nnueActive_)
       accStack_[ply + 1] = accStack_[ply]; // null move: no feature change
+    ssPiece_[ply] = Core::NO_PIECE_TYPE; // no continuation context past a null
     const int nullScore = -negamax(pos, depth - 1 - R, -beta, -beta + 1,
                                    ply + 1, limits, callbacks);
     pos.unmake_null_move(undo);
@@ -587,18 +616,26 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
       return is_mate_score(nullScore) ? beta : nullScore;
   }
 
-  StagedMoves picker(pos, nodeLegal, ttMove, ordering_, ply);
+  // Previous move context for continuation history (the reply we are about to
+  // choose is scored on how well it has answered this move before).
+  const Core::PieceType prevPt =
+      ply > 0 ? ssPiece_[ply - 1] : Core::NO_PIECE_TYPE;
+  const Core::Square prevTo = ply > 0 ? ssTo_[ply - 1] : Core::SQ_A1;
+
+  StagedMoves picker(pos, nodeLegal, ttMove, ordering_, ply, prevPt, prevTo);
   const bool pickerEmitsLegal = picker.emits_legal();
 
   const Core::Color us = pos.side_to_move();
   const int originalAlpha = alpha;
-  const int extension = inCheck ? 1 : 0;
+  const int baseExtension = inCheck ? 1 : 0;
 
   Core::Move bestMove = Core::Move::none();
   int bestScore = -INF_SCORE;
   int movesSearched = 0;
   Core::Move quietsTried[64];
   int quietsCount = 0;
+  Core::Move capturesTried[64];
+  int capturesCount = 0;
 
   while (true) {
     const Core::Move move = picker.next();
@@ -606,10 +643,31 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
       break;
     if (!pickerEmitsLegal && !Core::is_legal(nodeLegal, move))
       continue;
+    if (move == excludedMove)
+      continue;
 
     const bool isQuiet = !move.is_capture() && !move.is_promotion();
     if (movesSearched == 0)
       bestMove = move;
+
+    // Singular extension: verify whether the TT move is the only good move
+    // by searching the alternatives at reduced depth below a lowered window.
+    // If they all fail low, the TT move is forced -- search it one ply
+    // deeper so tactics behind it are not missed.
+    int extension = baseExtension;
+    if (!inCheck && !excludedMove.is_ok() && move == ttMove && depth >= 8 &&
+        tte != nullptr && tte->depth >= depth - 3 &&
+        tte->bound() != BOUND_UPPER) {
+      const int ttScore = TranspositionTable::scoreFromTT(tte->score, ply);
+      if (!is_mate_score(ttScore)) {
+        const int singularBeta = ttScore - 3 * depth;
+        const int singularDepth = (depth - 1) / 2;
+        const int s = negamax(pos, singularDepth, singularBeta - 1,
+                              singularBeta, ply, limits, callbacks, ttMove);
+        if (!stopped_ && s < singularBeta)
+          extension = 1;
+      }
+    }
 
     // Shallow-depth quiet-move pruning, only once a real move has been
     // searched (so mates/stalemates are never misdiagnosed) and away from
@@ -636,6 +694,8 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
         continue;
     }
 
+    const Core::PieceType movedPt = pos.piece_on(move.from_sq());
+
     tt_->prefetch(pos.key_after(move));
     Core::UndoInfo undo{};
     pos.make_move(move, undo);
@@ -645,6 +705,9 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
                           refreshTable_.get());
       PROF_ADD(profUpdCyc_, profUpds_);
     }
+    // Publish this move as the child's continuation context.
+    ssPiece_[ply] = movedPt;
+    ssTo_[ply] = move.to_sq();
 
     const int newDepth = depth - 1 + extension;
     int score;
@@ -656,7 +719,13 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
       int reduction = 0;
       if (depth >= 3 && movesSearched >= 3 && isQuiet && !inCheck) {
         reduction = 1 + (movesSearched >= 6 ? 1 : 0) + (depth >= 8 ? 1 : 0);
-        reduction = std::min(reduction, newDepth - 1);
+        // History-based adjustment: quiets with a strong history + continuation
+        // score are searched shallower less aggressively (and vice versa).
+        const int hist =
+            ordering_.history_score(us, move) +
+            ordering_.cont_score(prevPt, prevTo, movedPt, move.to_sq());
+        reduction -= std::clamp(hist / 8192, -2, 2);
+        reduction = std::clamp(reduction, 0, newDepth - 1);
       }
 
       score = -negamax(pos, newDepth - reduction, -alpha - 1, -alpha, ply + 1,
@@ -692,25 +761,54 @@ HOT_FN int EngineSearch::negamax(Core::Position &pos, int depth, int alpha,
     }
 
     if (alpha >= beta) {
-      if (isQuiet) {
-        ordering_.update_killers(ply, move);
-        ordering_.update_history(us, move, depth);
-        for (int q = 0; q < quietsCount; ++q) {
-          ordering_.update_history_malus(us, quietsTried[q], depth);
+      // Do not let a singular verification search (excluded move, narrow
+      // window) pollute the real killers/history the main search orders by.
+      if (!excludedMove.is_ok()) {
+        if (isQuiet) {
+          ordering_.update_killers(ply, move);
+          ordering_.update_history(us, move, depth);
+          ordering_.update_cont(prevPt, prevTo, movedPt, move.to_sq(), depth);
+          for (int q = 0; q < quietsCount; ++q) {
+            const Core::Move qm = quietsTried[q];
+            ordering_.update_history_malus(us, qm, depth);
+            ordering_.update_cont_malus(
+                prevPt, prevTo, pos.piece_on(qm.from_sq()), qm.to_sq(), depth);
+          }
+        } else if (move.is_capture()) {
+          const Core::PieceType victim =
+              move.is_en_passant() ? Core::PAWN : pos.piece_on(move.to_sq());
+          ordering_.update_capture(us, pos.piece_on(move.from_sq()),
+                                   move.to_sq(), victim, depth);
+        }
+        // Captures that were tried but did not cut off get a penalty.
+        for (int c = 0; c < capturesCount; ++c) {
+          const Core::Move cm = capturesTried[c];
+          const Core::PieceType v =
+              cm.is_en_passant() ? Core::PAWN : pos.piece_on(cm.to_sq());
+          ordering_.update_capture_malus(us, pos.piece_on(cm.from_sq()),
+                                         cm.to_sq(), v, depth);
         }
       }
       break;
     }
 
+    if (!isQuiet && move.is_capture() && capturesCount < 64)
+      capturesTried[capturesCount++] = move;
     if (isQuiet && quietsCount < 64)
       quietsTried[quietsCount++] = move;
   }
 
   if (movesSearched == 0) {
+    // No alternative to the excluded move: treat as a fail-low so the
+    // singular test sees the TT move as forced.
+    if (excludedMove.is_ok())
+      return alpha;
     return inCheck ? (-MATE_SCORE + ply) : 0;
   }
 
-  if (!stopped_) {
+  // A singular verification search must not pollute the table (its window
+  // and excluded move make the result unrepresentative of this position).
+  if (!stopped_ && !excludedMove.is_ok()) {
     TTBound bound;
     if (bestScore <= originalAlpha)
       bound = BOUND_UPPER;
@@ -747,6 +845,8 @@ int EngineSearch::search_root(Core::Position &root, Core::MoveList &rootMoves,
   for (int i = 0; i < rootMoves.size(); ++i) {
     const Core::Move move = rootMoves[i];
 
+    const Core::PieceType movedPt = root.piece_on(move.from_sq());
+
     tt_->prefetch(root.key_after(move));
     Core::UndoInfo undo{};
     root.make_move(move, undo);
@@ -756,6 +856,9 @@ int EngineSearch::search_root(Core::Position &root, Core::MoveList &rootMoves,
                           refreshTable_.get());
       PROF_ADD(profUpdCyc_, profUpds_);
     }
+    // Publish the root move as the continuation context for its children.
+    ssPiece_[0] = movedPt;
+    ssTo_[0] = move.to_sq();
 
     const int newDepth = depth - 1 + extension;
     int score;
@@ -832,6 +935,8 @@ Result EngineSearch::search(Core::Position root, const Limits &limits,
   for (int i = 1; i < threadCount_; ++i) {
     helpers.emplace_back(new EngineSearch(tt_, eval_));
     helpers.back()->smallNetThreshold_ = smallNetThreshold_;
+    helpers.back()->lazyEvalMargin_ = lazyEvalMargin_;
+    helpers.back()->threadId_ = i;
     helperViews_.push_back(helpers.back().get());
   }
 
@@ -905,9 +1010,25 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
   if (nnueActive_)
     eval_->big().refresh(root, accStack_[0]);
 
+  // Lazy-SMP depth staggering: helper threads skip a patterned subset of
+  // iterations so the pool explores a spread of depths and diversifies the
+  // shared TT, instead of every thread redoing the identical search. The
+  // master (threadId_ 0) always searches every depth. (Ethereal-style
+  // skip/phase table.)
+  static constexpr int kSkipSize[16] = {1, 1, 2, 2, 2, 3, 3, 3,
+                                        4, 4, 4, 4, 5, 5, 5, 5};
+  static constexpr int kSkipPhase[16] = {0, 1, 0, 1, 2, 0, 1, 2,
+                                         0, 1, 2, 3, 0, 1, 2, 3};
+
   for (int depth = 1; depth <= limits.maxDepth; ++depth) {
     if (check_stop(limits, callbacks))
       break;
+
+    if (threadId_ > 0 && depth > 1) {
+      const int s = (threadId_ - 1) % 16;
+      if (((depth + kSkipPhase[s]) / kSkipSize[s]) % 2 != 0)
+        continue; // this helper skips this depth
+    }
 
     qProbes_ = 0;
     qHits_ = 0;

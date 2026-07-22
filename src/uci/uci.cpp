@@ -230,7 +230,9 @@ private:
       return true;
     }
     if (cmd == "ponderhit") {
-      // Ponder is not advertised; ignore gracefully.
+      // The opponent played our predicted move: the ponder search keeps its
+      // tree and transposition table and simply starts spending our clock.
+      handle_ponderhit();
       return true;
     }
     if (cmd == "quit") {
@@ -249,9 +251,11 @@ private:
          " min 1 max 4096");
     emit("option name Move Overhead type spin default " +
          std::to_string(moveOverheadMs_) + " min 0 max 500");
+    emit("option name Ponder type check default false");
     emit("option name EvalFile type string default <empty>");
     emit("option name EvalFileSmall type string default <empty>");
     emit("option name SmallNetThreshold type spin default 950 min 0 max 5000");
+    emit("option name LazyEvalMargin type spin default 0 min 0 max 5000");
     emit("option name ShowStats type check default false");
     emit("uciok");
   }
@@ -324,8 +328,26 @@ private:
       return;
     }
 
+    if (name == "lazyevalmargin") {
+      int parsed = 0;
+      if (!parse_int(value, parsed)) {
+        emit("info string setoption LazyEvalMargin: invalid value '" + value +
+             "'");
+        return;
+      }
+      stop_and_join(true);
+      search_.set_lazy_eval_margin(parsed);
+      return;
+    }
+
     if (name == "showstats") {
       statsInfo_ = (to_lower(value) == "true");
+      return;
+    }
+
+    if (name == "ponder") {
+      // The GUI drives pondering via `go ponder`; this flag is advisory.
+      ponderEnabled_ = (to_lower(value) == "true");
       return;
     }
 
@@ -554,6 +576,9 @@ private:
       searchThread_.join();
     }
 
+    // Publish the ponder state before the worker starts so a `ponderhit`
+    // arriving immediately after `go ponder` is never lost.
+    pondering_.store(params.ponder, std::memory_order_release);
     stopRequested_.store(false, std::memory_order_relaxed);
     searchThread_ = std::thread([this, searchId, params]() {
       // A thread entry must not let an exception escape (it would call
@@ -570,14 +595,27 @@ private:
 
   void stop_and_join(bool suppressOutput) {
     std::lock_guard<std::mutex> lock(searchMu_);
-    if (!searchThread_.joinable())
+    if (!searchThread_.joinable()) {
+      pondering_.store(false, std::memory_order_relaxed);
       return;
+    }
 
     if (suppressOutput)
       activeSearchId_.fetch_add(1, std::memory_order_relaxed);
     stopRequested_.store(true, std::memory_order_relaxed);
     searchThread_.join();
     stopRequested_.store(false, std::memory_order_relaxed);
+    pondering_.store(false, std::memory_order_relaxed);
+  }
+
+  // Transition a running ponder search onto our own clock. Publishing
+  // `ponderHitTime_` before releasing `pondering_` makes the timestamp visible
+  // to the worker the instant it observes the flag clear.
+  void handle_ponderhit() {
+    if (!pondering_.load(std::memory_order_relaxed))
+      return;
+    ponderHitTime_ = Clock::now();
+    pondering_.store(false, std::memory_order_release);
   }
 
   void emit_info(const Search::IterInfo &info) {
@@ -610,10 +648,14 @@ private:
     }
   }
 
-  void emit_bestmove(uint64_t searchId, Core::Move bestMove) {
+  void emit_bestmove(uint64_t searchId, Core::Move bestMove,
+                     Core::Move ponderMove) {
     if (searchId != activeSearchId_.load(std::memory_order_relaxed))
       return;
-    emit("bestmove " + move_to_uci(bestMove));
+    std::string line = "bestmove " + move_to_uci(bestMove);
+    if (ponderMove.is_ok())
+      line += " ponder " + move_to_uci(ponderMove);
+    emit(line);
   }
 
   void search_worker(uint64_t searchId, const GoParams &params) {
@@ -628,7 +670,9 @@ private:
     if (params.movetimeMs > 0) {
       maximumTimeMs = std::max(1, params.movetimeMs - moveOverheadMs_);
       optimumTimeMs = maximumTimeMs;
-    } else if (!params.infinite && !params.ponder) {
+    } else if (!params.infinite) {
+      // Clock-based budget. Ponder searches compute it here as well, but hold
+      // the deadline until `ponderhit` starts our clock (see below).
       const bool whiteToMove = root.side_to_move() == Core::WHITE;
       const int clockMs = whiteToMove ? params.wtimeMs : params.btimeMs;
       const bool hasClock = clockMs >= 0;
@@ -666,7 +710,9 @@ private:
     searchLimits.maxNodes = params.nodes;
     searchLimits.hasDeadline = false;
 
-    if (maximumTimeMs > 0) {
+    // A ponder search must not arm a hard deadline: its budget starts only at
+    // `ponderhit`, after which the worker's callbacks enforce it by wall clock.
+    if (maximumTimeMs > 0 && !params.ponder) {
       searchLimits.hasDeadline = true;
       searchLimits.deadline = Clock::now() + Ms(maximumTimeMs);
     }
@@ -686,49 +732,99 @@ private:
 
     std::atomic<bool> softStop{false};
 
-    // Track score across iterations to determine if we are blundering
+    // Dynamic time management, driven per completed iteration:
+    //   * extend the budget when the score drops (avoid horizon blunders), and
+    //   * scale it down when the best move has been stable for several
+    //     iterations (we are already confident) or up when it keeps changing.
     int previousScore = 0;
     bool firstIteration = true;
     int currentOptimumMs = optimumTimeMs;
+    uint16_t lastBest = 0;
+    int bestStableIters = 0;
+    const bool isPonder = params.ponder;
+    Core::Move ponderMove = Core::Move::none();
 
     Search::Callbacks callbacks;
-    callbacks.shouldStop = [this, searchId, &softStop]() {
-      return softStop.load(std::memory_order_relaxed) ||
-             stopRequested_.load(std::memory_order_relaxed) ||
-             searchId != activeSearchId_.load(std::memory_order_relaxed);
+    callbacks.shouldStop = [this, searchId, &softStop, isPonder,
+                            maximumTimeMs]() {
+      if (softStop.load(std::memory_order_relaxed) ||
+          stopRequested_.load(std::memory_order_relaxed) ||
+          searchId != activeSearchId_.load(std::memory_order_relaxed))
+        return true;
+      // Ponder searches arm no Limits deadline; once the hit starts our clock,
+      // enforce the hard maximum here at node-poll granularity.
+      if (isPonder && maximumTimeMs > 0 &&
+          !pondering_.load(std::memory_order_acquire)) {
+        if (Clock::now() - ponderHitTime_ >= Ms(maximumTimeMs))
+          return true;
+      }
+      return false;
     };
 
     callbacks.onInfo = [this, searchId, &softStop, &previousScore,
-                        &firstIteration, &currentOptimumMs,
+                        &firstIteration, &currentOptimumMs, &lastBest,
+                        &bestStableIters, &ponderMove, isPonder,
                         maximumTimeMs](const Search::IterInfo &info) {
       if (searchId != activeSearchId_.load(std::memory_order_relaxed))
         return;
       emit_info(info);
 
+      // The predicted reply to ponder on next: the second move of the PV.
+      ponderMove = info.pvLen >= 2 ? info.pv[1] : Core::Move::none();
+
+      // Time spent against our own budget. While pondering we run on the
+      // opponent's clock, so the budget clock starts only at the ponder hit.
+      int budgetElapsedMs = info.elapsedMs;
+      if (isPonder) {
+        budgetElapsedMs =
+            pondering_.load(std::memory_order_acquire)
+                ? -1 // still the opponent's clock: never cut off on time
+                : static_cast<int>(std::chrono::duration_cast<Ms>(
+                                       Clock::now() - ponderHitTime_)
+                                       .count());
+      }
+
       if (!firstIteration && currentOptimumMs > 0 &&
           !Search::is_mate_score(info.scoreCp) &&
           !Search::is_mate_score(previousScore)) {
-        // If the evaluation drops by more than 30 cp, extend the optimum time
-        // to ensure we aren't walking into a tactical blunder due to the
-        // horizon effect.
+        // Score drop => extend, to avoid walking into a tactic at the horizon.
         if (info.scoreCp < previousScore - 30) {
           currentOptimumMs =
               std::min(maximumTimeMs, static_cast<int>(currentOptimumMs * 1.5));
         }
       }
 
+      // Best-move stability: count consecutive iterations with the same root
+      // move, then scale the effective budget -- less time when settled,
+      // slightly more when the move keeps flipping.
+      const uint16_t best = info.pvLen > 0 ? info.pv[0].raw() : 0;
+      bestStableIters = (best == lastBest) ? bestStableIters + 1 : 0;
+      lastBest = best;
+
       previousScore = info.scoreCp;
       firstIteration = false;
 
-      // If we finished a depth and exceeded our allowed soft-limit time,
-      // trigger a stop
-      if (currentOptimumMs > 0 && info.elapsedMs >= currentOptimumMs) {
-        softStop.store(true, std::memory_order_relaxed);
+      if (currentOptimumMs > 0 && budgetElapsedMs >= 0) {
+        const double factor =
+            std::clamp(1.30 - 0.11 * bestStableIters, 0.45, 1.30);
+        const int budget = std::min(
+            maximumTimeMs, static_cast<int>(currentOptimumMs * factor));
+        if (budgetElapsedMs >= budget)
+          softStop.store(true, std::memory_order_relaxed);
       }
     };
 
     const Search::Result result = search_.search(root, searchLimits, callbacks);
-    emit_bestmove(searchId, result.bestMove);
+
+    // If the search exhausted its depth while still pondering, UCI forbids
+    // emitting bestmove until a ponderhit or stop arrives -- hold it here.
+    while (isPonder && pondering_.load(std::memory_order_acquire) &&
+           !stopRequested_.load(std::memory_order_relaxed) &&
+           searchId == activeSearchId_.load(std::memory_order_relaxed)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    emit_bestmove(searchId, result.bestMove, ponderMove);
   }
 
   void emit(const std::string &line) {
@@ -745,6 +841,14 @@ private:
   std::atomic<bool> stopRequested_{false};
   std::atomic<uint64_t> activeSearchId_{0};
   std::thread searchThread_;
+
+  // Pondering: true from `go ponder` until `ponderhit`/`stop`. While set, the
+  // search runs on the opponent's clock (no time cutoff). `ponderHitTime_` is
+  // published under the release store below and read by the worker under the
+  // matching acquire load, so it is the moment our own clock starts.
+  std::atomic<bool> pondering_{false};
+  Clock::time_point ponderHitTime_{};
+  bool ponderEnabled_ = false;
 
   int threads_ = 1;
   // Default sized to sit inside the shared L3 cache alongside the
