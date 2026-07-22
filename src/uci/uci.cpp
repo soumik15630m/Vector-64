@@ -686,10 +686,15 @@ private:
 
     std::atomic<bool> softStop{false};
 
-    // Track score across iterations to determine if we are blundering
+    // Dynamic time management, driven per completed iteration:
+    //   * extend the budget when the score drops (avoid horizon blunders), and
+    //   * scale it down when the best move has been stable for several
+    //     iterations (we are already confident) or up when it keeps changing.
     int previousScore = 0;
     bool firstIteration = true;
     int currentOptimumMs = optimumTimeMs;
+    uint16_t lastBest = 0;
+    int bestStableIters = 0;
 
     Search::Callbacks callbacks;
     callbacks.shouldStop = [this, searchId, &softStop]() {
@@ -699,7 +704,8 @@ private:
     };
 
     callbacks.onInfo = [this, searchId, &softStop, &previousScore,
-                        &firstIteration, &currentOptimumMs,
+                        &firstIteration, &currentOptimumMs, &lastBest,
+                        &bestStableIters,
                         maximumTimeMs](const Search::IterInfo &info) {
       if (searchId != activeSearchId_.load(std::memory_order_relaxed))
         return;
@@ -708,22 +714,30 @@ private:
       if (!firstIteration && currentOptimumMs > 0 &&
           !Search::is_mate_score(info.scoreCp) &&
           !Search::is_mate_score(previousScore)) {
-        // If the evaluation drops by more than 30 cp, extend the optimum time
-        // to ensure we aren't walking into a tactical blunder due to the
-        // horizon effect.
+        // Score drop => extend, to avoid walking into a tactic at the horizon.
         if (info.scoreCp < previousScore - 30) {
           currentOptimumMs =
               std::min(maximumTimeMs, static_cast<int>(currentOptimumMs * 1.5));
         }
       }
 
+      // Best-move stability: count consecutive iterations with the same root
+      // move, then scale the effective budget -- less time when settled,
+      // slightly more when the move keeps flipping.
+      const uint16_t best = info.pvLen > 0 ? info.pv[0].raw() : 0;
+      bestStableIters = (best == lastBest) ? bestStableIters + 1 : 0;
+      lastBest = best;
+
       previousScore = info.scoreCp;
       firstIteration = false;
 
-      // If we finished a depth and exceeded our allowed soft-limit time,
-      // trigger a stop
-      if (currentOptimumMs > 0 && info.elapsedMs >= currentOptimumMs) {
-        softStop.store(true, std::memory_order_relaxed);
+      if (currentOptimumMs > 0) {
+        const double factor =
+            std::clamp(1.30 - 0.11 * bestStableIters, 0.45, 1.30);
+        const int budget = std::min(
+            maximumTimeMs, static_cast<int>(currentOptimumMs * factor));
+        if (info.elapsedMs >= budget)
+          softStop.store(true, std::memory_order_relaxed);
       }
     };
 
