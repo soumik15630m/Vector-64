@@ -119,7 +119,10 @@ def main() -> int:
     p.add_argument("--games", type=int, default=20000, help="self-play games/gen")
     p.add_argument("--dg-nodes", type=int, default=6000, help="nodes/move in datagen")
     p.add_argument("--lam", type=float, default=0.5, help="WDL blend weight")
-    p.add_argument("--epochs", type=int, default=3, help="fine-tune epochs/gen")
+    p.add_argument("--epochs", type=int, default=6, help="fine-tune epochs/gen")
+    p.add_argument("--lr", type=float, default=2e-4,
+                   help="fine-tune learning rate (NOT the 1e-3 from-scratch rate: "
+                        "warm-starting at 1e-3 causes catastrophic forgetting)")
     p.add_argument("--sprt-nodes", type=int, default=8000)
     p.add_argument("--sprt-games", type=int, default=4000)
     p.add_argument("--concurrency", type=int, default=10)
@@ -208,7 +211,8 @@ def main() -> int:
                   f"{len(lich_lines)} lichess = {len(combined)} positions", flush=True)
             cmd = [py, str(HERE / "make_net.py"), "--input", str(train_input),
                    "--workdir", str(gdir), "--init", state["best_float"],
-                   "--epochs", str(args.epochs), "--engine", args.engine]
+                   "--epochs", str(args.epochs), "--lr", str(args.lr),
+                   "--engine", args.engine]
             if args.device:
                 cmd += ["--device", args.device]
             run(cmd, log)
