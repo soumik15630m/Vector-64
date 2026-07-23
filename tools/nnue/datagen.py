@@ -205,6 +205,8 @@ def main() -> int:
                    help="blend: '<fen> | <cp>' with WDL baked in via --lam "
                         "(make_net input); raw: '<fen> | <eval> | <wdl>' "
                         "white-relative, unblended (bullet's native ingest format)")
+    p.add_argument("--log-interval", type=float, default=30.0,
+                   help="seconds between progress heartbeat lines")
     p.add_argument("--seed", type=int, default=12345)
     p.add_argument("--out", required=True)
     args = p.parse_args()
@@ -216,8 +218,10 @@ def main() -> int:
 
     lock = threading.Lock()
     counters = {"games": 0, "positions": 0, "w": 0, "d": 0, "l": 0}
+    prog = {"last": 0.0}
     fh = open(args.out, "w", encoding="utf-8")
     t0 = time.time()
+    prog["last"] = t0
     print(f"[datagen] {args.games} games @ {args.nodes} nodes, {args.concurrency} "
           f"workers, lambda={args.lam}, net={os.path.basename(args.net)}", flush=True)
 
@@ -240,24 +244,27 @@ def main() -> int:
                 if len(buf) >= 2000:
                     with lock:
                         fh.writelines(buf)
-                        counters["positions"] += len(buf)
                     buf.clear()
                 with lock:
                     counters["games"] += 1
+                    counters["positions"] += len(rec)
                     counters["w" if wdl == 1.0 else "l" if wdl == 0.0 else "d"] += 1
-                    g = counters["games"]
-                    if g % 500 == 0:
-                        el = time.time() - t0
-                        rate = g / max(el, 1e-9)
-                        eta = (args.games - g) / max(rate, 1e-9) / 60.0
-                        print(f"  {g}/{args.games} games  "
-                              f"{counters['positions'] + len(buf)} pos  "
-                              f"{rate:.1f} g/s  eta {eta:.1f} min", flush=True)
+                    now = time.time()
+                    if now - prog["last"] >= args.log_interval:
+                        prog["last"] = now
+                        g = counters["games"]
+                        el = max(now - t0, 1e-9)
+                        gps = g / el
+                        pos = counters["positions"]
+                        eta = (args.games - g) / max(gps, 1e-9) / 60.0
+                        print(f"  {g}/{args.games} ({100.0 * g / args.games:.0f}%)  "
+                              f"{pos:,} pos  {gps:.1f} g/s  {pos / el:.0f} pos/s  "
+                              f"W/D/L {counters['w']}/{counters['d']}/{counters['l']}"
+                              f"  eta {eta:.1f}m", flush=True)
         finally:
             if buf:
                 with lock:
                     fh.writelines(buf)
-                    counters["positions"] += len(buf)
             eng.quit()
 
     threads = [threading.Thread(target=worker) for _ in range(args.concurrency)]

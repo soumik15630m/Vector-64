@@ -65,6 +65,8 @@ def main() -> int:
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument("--chunk-games", type=int, default=40000,
                    help="games per chunk == crash-recovery granularity")
+    p.add_argument("--log-interval", type=float, default=30.0,
+                   help="seconds between datagen progress heartbeat lines")
     p.add_argument("--seed-base", type=int, default=100_000)
     args = p.parse_args()
 
@@ -91,6 +93,7 @@ def main() -> int:
                    "--net", args.net, "--games", str(args.chunk_games),
                    "--nodes", str(args.nodes), "--lam", str(args.lam),
                    "--emit", args.emit, "--concurrency", str(args.concurrency),
+                   "--log-interval", str(args.log_interval),
                    "--seed", str(seed), "--out", str(shard)], log)
         got = count_lines(shard)
         state["chunks"].append({"file": shard.name, "seed": seed, "positions": got})
