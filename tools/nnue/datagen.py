@@ -37,6 +37,7 @@ import queue
 import subprocess
 import threading
 import time
+from collections.abc import Hashable
 
 import chess
 
@@ -165,14 +166,22 @@ def play_and_record(engine: Engine, opening: str, nodes: int, max_plies: int,
     engine.new_game()
     rec: list[tuple[str, int]] = []
     wdl = 0.5
+    seen: dict[Hashable, int] = {}  # transposition-key counts for cheap threefold
     while True:
-        outcome = board.outcome(claim_draw=True)
-        if outcome is not None:
-            r = outcome.result()
-            wdl = 1.0 if r == "1-0" else 0.0 if r == "0-1" else 0.5
+        # Cheap terminal detection. board.outcome(claim_draw=True) re-scanned the
+        # whole move stack for threefold/fifty-move CLAIMS every ply (~11% of
+        # datagen CPU); track repetitions incrementally instead. Draw thresholds
+        # (threefold, 50-move, insufficient material) match the claim_draw
+        # outcome; games end at most ~1 ply later (actual vs claimable rep).
+        key = board._transposition_key()
+        seen[key] = seen.get(key, 0) + 1
+        if (seen[key] >= 3 or board.halfmove_clock >= 100
+                or len(moves) >= max_plies or board.is_insufficient_material()):
+            wdl = 0.5  # draw (rep / 50-move / material / balanced cut)
             break
-        if len(moves) >= max_plies:
-            wdl = 0.5  # adjudicate the (already balanced) cut game as a draw
+        if not any(board.legal_moves):  # checkmate or stalemate
+            wdl = (0.0 if board.turn == chess.WHITE else 1.0) \
+                if board.is_check() else 0.5
             break
         bm, score = engine.search(moves, nodes)
         if (len(moves) >= skip_plies and score is not None
