@@ -44,7 +44,9 @@ def main() -> int:
     p.add_argument("--scratch", default="runs/bulk/bin", help="dir for .bin intermediates")
     p.add_argument("--workdir", default="runs/bulk/train", help="output dir for model_float.pt + .nnue")
     p.add_argument("--engine", default="build-bench/bin/ChessEngine.exe")
-    p.add_argument("--epochs", type=int, default=10, help="passes over the dataset")
+    p.add_argument("--epochs", type=int, default=20,
+                   help="passes over the dataset (20 x 500M = 10B visits; "
+                        "500M unique tolerates it, overfitting risk only past ~30-40)")
     p.add_argument("--batch", type=int, default=16384)
     p.add_argument("--shuffle-mem-mb", type=int, default=8192)
     p.add_argument("--keep-scratch", action="store_true", help="don't delete .bin intermediates")
