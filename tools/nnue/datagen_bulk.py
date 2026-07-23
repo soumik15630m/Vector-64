@@ -57,7 +57,11 @@ def main() -> int:
     p.add_argument("--target-positions", type=int, default=500_000_000)
     p.add_argument("--nodes", type=int, default=5000,
                    help="nodes/move (lower = more throughput; WDL carries the signal)")
-    p.add_argument("--lam", type=float, default=0.5, help="WDL blend weight")
+    p.add_argument("--lam", type=float, default=0.5,
+                   help="WDL blend weight (only used by --emit blend)")
+    p.add_argument("--emit", choices=("blend", "raw"), default="raw",
+                   help="shard line format: raw = bullet's '<fen> | <eval> | <wdl>' "
+                        "(default); blend = '<fen> | <cp>' for the PyTorch trainer")
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument("--chunk-games", type=int, default=40000,
                    help="games per chunk == crash-recovery granularity")
@@ -86,8 +90,8 @@ def main() -> int:
         run_chunk([py, str(HERE / "datagen.py"), "--engine", args.engine,
                    "--net", args.net, "--games", str(args.chunk_games),
                    "--nodes", str(args.nodes), "--lam", str(args.lam),
-                   "--concurrency", str(args.concurrency), "--seed", str(seed),
-                   "--out", str(shard)], log)
+                   "--emit", args.emit, "--concurrency", str(args.concurrency),
+                   "--seed", str(seed), "--out", str(shard)], log)
         got = count_lines(shard)
         state["chunks"].append({"file": shard.name, "seed": seed, "positions": got})
         state["positions"] += got

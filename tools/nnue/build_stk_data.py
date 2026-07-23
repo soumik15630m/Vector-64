@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -70,7 +71,17 @@ def extract_cp(rec: dict, min_depth: int) -> float | None:
     return best_cp
 
 
-def parse_line(line: str, min_depth: int) -> tuple[str, float] | None:
+def blend_cp(eval_white: float, wdl: float, lam: float) -> float:
+    """Blend a white-relative eval (cp) with the white-relative game result in
+    win-probability space (mirrors datagen.blend_cp). lam is the WDL weight."""
+    p_eval = 1.0 / (1.0 + math.exp(-max(-4000.0, min(4000.0, eval_white)) / 400.0))
+    p = (1.0 - lam) * p_eval + lam * wdl
+    p = min(max(p, 1e-4), 1.0 - 1e-4)
+    return 400.0 * math.log(p / (1.0 - p))
+
+
+def parse_line(line: str, min_depth: int,
+               wdl_lambda: float = 0.5) -> tuple[str, float] | None:
     line = line.strip()
     if not line:
         return None
@@ -82,8 +93,18 @@ def parse_line(line: str, min_depth: int) -> tuple[str, float] | None:
         cp = extract_cp(rec, min_depth)
         return (fen, cp) if cp is not None else None
     if "|" in line:
-        fen_str, cp_str = line.rsplit("|", 1)
-        return fen_str.strip(), float(cp_str)
+        parts = line.split("|")
+        try:
+            if len(parts) == 3:
+                # bullet-native '<fen> | <eval> | <wdl>' (both white-relative);
+                # blend to a single cp target for the PyTorch trainer.
+                fen_str, ev_str, wdl_str = parts
+                return fen_str.strip(), blend_cp(float(ev_str), float(wdl_str),
+                                                 wdl_lambda)
+            fen_str, cp_str = line.rsplit("|", 1)
+            return fen_str.strip(), float(cp_str)
+        except ValueError:
+            return None
     return None
 
 

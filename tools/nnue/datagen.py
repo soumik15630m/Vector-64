@@ -3,9 +3,16 @@
 
 The C++ engine plays itself at fixed nodes from seeded, material-balanced
 openings. Each quiet position (not in check, past the opening book, with a
-completed search score) is labelled with a WDL-blended target and written as
-``<fen> | <cp>`` lines -- exactly what tools/nnue/build_stk_data.py consumes, so
-the rest of the training pipeline is unchanged.
+completed search score) is recorded. Two output formats (``--emit``):
+
+  blend : ``<fen> | <cp>``            WDL baked in via --lam; make_net.py input
+  raw   : ``<fen> | <eval> | <wdl>``  white-relative, unblended; bullet's native
+                                      text ingest (bullet does its own blend)
+
+``blend`` feeds the PyTorch trainer (build_stk_data.py), so that pipeline is
+unchanged; ``raw`` feeds bullet, which prefers to blend eval and game result at
+train time. build_stk_data.py also reads the raw 3-field form (blending it) so
+either dataset can train the PyTorch net.
 
 The blend lives in win-probability space (the same space make_net.py's
 sigmoid(cp/400) loss uses):
@@ -192,7 +199,12 @@ def main() -> int:
     p.add_argument("--max-plies", type=int, default=200)
     p.add_argument("--skip-plies", type=int, default=12,
                    help="drop the first N plies (opening noise)")
-    p.add_argument("--lam", type=float, default=0.5, help="WDL blend weight")
+    p.add_argument("--lam", type=float, default=0.5,
+                   help="WDL blend weight (only used by --emit blend)")
+    p.add_argument("--emit", choices=("blend", "raw"), default="blend",
+                   help="blend: '<fen> | <cp>' with WDL baked in via --lam "
+                        "(make_net input); raw: '<fen> | <eval> | <wdl>' "
+                        "white-relative, unblended (bullet's native ingest format)")
     p.add_argument("--seed", type=int, default=12345)
     p.add_argument("--out", required=True)
     args = p.parse_args()
@@ -221,7 +233,10 @@ def main() -> int:
                 rec, wdl = play_and_record(eng, opening, args.nodes,
                                            args.max_plies, args.skip_plies)
                 for fen, ev in rec:
-                    buf.append(f"{fen} | {blend_cp(ev, wdl, args.lam)}\n")
+                    if args.emit == "raw":
+                        buf.append(f"{fen} | {ev} | {wdl:.1f}\n")
+                    else:
+                        buf.append(f"{fen} | {blend_cp(ev, wdl, args.lam)}\n")
                 if len(buf) >= 2000:
                     with lock:
                         fh.writelines(buf)
