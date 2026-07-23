@@ -30,8 +30,20 @@ bullet never touches the `.nnue` format.
       L1 1024->16 / L2 16->32 / out 32->1 (CReLU, not screlu), PSQT
       (`psq_stm - psq_ntm`). Compiles; trained 1M positions 3sb x 60b,
       loss 0.048->0.024, ~827k pos/sec (=> 500M x 10ep ~= 1.5-2h).
-- [ ] Weight transfer bullet raw.bin -> `STKNet` -> reuse make_net export/verify.
-- [ ] Full training run + SPRT vs runs/v2.
+- [x] **Weight transfer VERIFIED end-to-end** (`transfer_to_stknet.py`,
+      `stk_eval.rs`). bullet stores weights **column-major** (out,in) -> read as
+      `raw.reshape(in,out)`. STKNet(transferred) == bullet's `eval_raw_output`*400
+      to 0.0000 cp on 5 FENs (oracle: `stk_eval` loads the checkpoint + bullet's
+      real forward). Then make_net export + engine parity: `PASS engine ==
+      quantized reference (max diff 0 cp), mirror-symmetric`. Full pipeline works.
+- [ ] Full training run (500M) + SPRT vs runs/v2.
+
+### Transfer scalings (verified)
+`ft.weight[f+1]=M0[f]` (`M0=l0w.reshape(NIN,H)`); `ft_bias=l0b+M0[DEAD]`;
+`l1w=(l1w.reshape(H,128).T).reshape(8,16,H)*128/127` (PAIR_FACTOR);
+`l2w=(l2w.reshape(16,256).T).reshape(8,32,16)`;
+`outw=(l3w.reshape(32,8).T)*eval_scale/OUT_CP` (400/508);
+`psqt.weight[f+1]=MP[f]*eval_scale` (`MP=psqtw.reshape(NIN,8)`). Biases 1-D.
 
 ### bullet save layout (checkpoints/<net>/raw.bin, from save_format order)
 Raw f32, no header, concatenated in this order (bytes verified = 93,547,104):
