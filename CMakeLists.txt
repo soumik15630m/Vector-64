@@ -72,6 +72,7 @@ set(CORE_SOURCES
         src/search/search.cpp
         src/search/syzygy.cpp
         src/nnue/network.cpp
+        src/datagen/datagen.cpp
         # Vendored Syzygy tablebase prober (Fathom, MIT). Built as C++ (see the
         # LANGUAGE property below) so it uses std::atomic / std::mutex on every
         # toolchain, avoiding MSVC's opt-in C11 atomics.
@@ -94,6 +95,7 @@ set(CORE_HEADERS
         src/search/syzygy.h
         src/nnue/halfka.h
         src/nnue/network.h
+        src/datagen/datagen.h
 )
 
 add_library(chess_core STATIC ${CORE_SOURCES} ${CORE_HEADERS})

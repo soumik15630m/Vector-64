@@ -1,3 +1,4 @@
+#include "datagen/datagen.h"
 #include "perfts.h"
 #include "uci/uci.h"
 #include <charconv>
@@ -54,6 +55,10 @@ int main(int argc, char **argv) {
   // A single top-level guard so no exception escapes main (which would call
   // std::terminate and lose the diagnostic).
   try {
+    if (argc > 1 && std::string(argv[1]) == "datagen") {
+      return Datagen::run(argc, argv);
+    }
+
     if (argc >= 5 && std::string(argv[1]) == "--perft-one") {
       // --perft-one "<fen>" <depth> <expected-nodes>
       try {
