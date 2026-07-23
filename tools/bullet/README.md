@@ -24,9 +24,30 @@ bullet never touches the `.nnue` format.
       `stk_halfka.rs` + `parity_check.py`: 266 indices across 5 positions match
       `halfka_features.py` bit-for-bit (symmetric startpos, asymmetric post-1.e4
       both colours, mirrored-king castled, asymmetric endgame).
-- [ ] Full net def (pairwise + per-bucket L1/L2 + PSQT) + forward parity.
-- [ ] Weight transfer bullet -> `STKNet` -> reuse make_net export/verify.
+- [x] **Full net def + dry run TRAINS on GPU.** `stk_train.rs`: custom StkHalfKa
+      input + custom `StkBucket` output buckets (`(pieces-1)/4`, NOT bullet's
+      `MaterialCount` = `(pieces-2)/4`), FT->CReLU->pairwise-mul, per-bucket
+      L1 1024->16 / L2 16->32 / out 32->1 (CReLU, not screlu), PSQT
+      (`psq_stm - psq_ntm`). Compiles; trained 1M positions 3sb x 60b,
+      loss 0.048->0.024, ~827k pos/sec (=> 500M x 10ep ~= 1.5-2h).
+- [ ] Weight transfer bullet raw.bin -> `STKNet` -> reuse make_net export/verify.
 - [ ] Full training run + SPRT vs runs/v2.
+
+### bullet save layout (checkpoints/<net>/raw.bin, from save_format order)
+Raw f32, no header, concatenated in this order (bytes verified = 93,547,104):
+`l0w[22529*1024] l0b[1024] l1w[128*1024] l1b[128] l2w[256*16] l2b[256]
+l3w[8*32] l3b[8] psqtw[8*22529] psqtb[8]`. (Affine weight orientation per
+tensor still to confirm during transfer via forward parity; 4_multi_layer uses
+`.transpose()` on l1w+ for inference, so raw is bullet's training layout.)
+
+### Transfer plan (phase 2, remaining)
+Read raw.bin f32 -> map to STKNet params: l0w->ft.weight (fold dead row 22528
+into ft_bias, handle orientation), l0b->ft_bias, l1w/l1b/l2w/l2b/l3w/l3b ->
+per-bucket l1w/l1b/l2w/l2b/outw/outb (reshape [8,..], fold PAIR_FACTOR=127/128
+into l1w, reconcile OUT_CP=508 vs bullet eval_scale), psqtw/psqtb -> psqt (fold
+psqt bias into outb). Then make_net stage_export + stage_verify (engine==ref).
+Gate: a bullet-side eval oracle (port simple.rs's Network::evaluate to STK arch)
+to bit-check STKNet(transferred) == bullet before trusting the export.
 
 ### bulletformat::ChessBoard encoding (decoded from source, verified by parity)
 Stored **side-to-move-relative**: black-to-move flips (`piece ^= 8; square ^= 56`).
