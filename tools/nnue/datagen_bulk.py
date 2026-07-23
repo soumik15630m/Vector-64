@@ -43,7 +43,9 @@ def run_chunk(cmd: list[str], log) -> None:
     assert proc.stdout is not None
     for line in proc.stdout:
         sys.stdout.write(line)
+        sys.stdout.flush()  # else Tee-Object block-buffers the pipe (no live output)
         log.write(line)
+        log.flush()
     proc.wait()
     if proc.returncode != 0:
         raise SystemExit(f"datagen chunk failed ({proc.returncode})")
@@ -89,7 +91,7 @@ def main() -> int:
         idx = len(state["chunks"])
         shard = out / f"shard_{idx:04d}.txt"
         seed = args.seed_base + idx
-        run_chunk([py, str(HERE / "datagen.py"), "--engine", args.engine,
+        run_chunk([py, "-u", str(HERE / "datagen.py"), "--engine", args.engine,
                    "--net", args.net, "--games", str(args.chunk_games),
                    "--nodes", str(args.nodes), "--lam", str(args.lam),
                    "--emit", args.emit, "--concurrency", str(args.concurrency),
