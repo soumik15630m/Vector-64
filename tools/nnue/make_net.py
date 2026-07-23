@@ -190,9 +190,22 @@ def stage_prep(args: argparse.Namespace, work: Path) -> Path:
         cp_rows.clear()
         progress_path.write_text(json.dumps({"lines": line_no, "shards": shards_done, "kept": kept}))
 
+    # --input is either one file (.jsonl/.zst/.txt) or a directory of '<fen> |
+    # <cp>' .txt shards (e.g. datagen_bulk's output); shards are read in a
+    # stable sorted order so the resume line counter stays valid.
+    input_path = Path(args.input)
+    input_files = (sorted(input_path.glob("*.txt")) if input_path.is_dir()
+                   else [input_path])
+    if not input_files:
+        raise SystemExit(f"[prep] no .txt shards found in {input_path}")
+
+    def _input_lines():
+        for f in input_files:
+            yield from prep.iter_lines(f)
+
     line_no = 0
     t0 = time.time()
-    for line in prep.iter_lines(Path(args.input)):
+    for line in _input_lines():
         line_no += 1
         if line_no <= lines_done:
             continue  # fast-forward on resume
@@ -524,7 +537,9 @@ def stage_verify(args: argparse.Namespace, float_path: Path, net_path: Path) -> 
 
 def main() -> int:
     p = argparse.ArgumentParser(description="STK-HalfKA NNUE pipeline (prep/train/export/verify, resumable).")
-    p.add_argument("--input", default=None, help=".jsonl(.zst) lichess evals or '<fen> | <cp>' text")
+    p.add_argument("--input", default=None,
+                   help=".jsonl(.zst) lichess evals, a '<fen> | <cp>' .txt file, "
+                        "or a directory of such .txt shards (datagen_bulk output)")
     p.add_argument("--workdir", required=True)
     p.add_argument("--epochs", type=int, default=20, help="20 x 200M ~= bullet's canonical 4B visits")
     p.add_argument("--hidden", type=int, default=1024, choices=(1024, 128), help="net width (128 = small net)")
