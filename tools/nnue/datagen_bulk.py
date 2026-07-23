@@ -70,6 +70,9 @@ def main() -> int:
     p.add_argument("--log-interval", type=float, default=30.0,
                    help="seconds between datagen progress heartbeat lines")
     p.add_argument("--seed-base", type=int, default=100_000)
+    p.add_argument("--python", action="store_true",
+                   help="use the Python datagen.py driver instead of the engine's "
+                        "native 'datagen' subcommand (native is ~30%% faster)")
     args = p.parse_args()
 
     out = Path(args.out_dir)
@@ -91,12 +94,21 @@ def main() -> int:
         idx = len(state["chunks"])
         shard = out / f"shard_{idx:04d}.txt"
         seed = args.seed_base + idx
-        run_chunk([py, "-u", str(HERE / "datagen.py"), "--engine", args.engine,
+        if args.python:
+            cmd = [py, "-u", str(HERE / "datagen.py"), "--engine", args.engine,
                    "--net", args.net, "--games", str(args.chunk_games),
                    "--nodes", str(args.nodes), "--lam", str(args.lam),
                    "--emit", args.emit, "--concurrency", str(args.concurrency),
                    "--log-interval", str(args.log_interval),
-                   "--seed", str(seed), "--out", str(shard)], log)
+                   "--seed", str(seed), "--out", str(shard)]
+        else:  # engine's native datagen subcommand (reuses search+NNUE, faster)
+            cmd = [str(Path(args.engine).resolve()), "datagen", "--net", args.net,
+                   "--games", str(args.chunk_games), "--nodes", str(args.nodes),
+                   "--lam", str(args.lam), "--emit", args.emit,
+                   "--threads", str(args.concurrency),
+                   "--log-interval", str(args.log_interval),
+                   "--seed", str(seed), "--out", str(shard)]
+        run_chunk(cmd, log)
         got = count_lines(shard)
         state["chunks"].append({"file": shard.name, "seed": seed, "positions": got})
         state["positions"] += got
