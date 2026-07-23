@@ -162,7 +162,7 @@ fn main() {
         },
         wdl_scheduler: wdl::ConstantWDL { value: 0.5 },
         lr_scheduler: lr::CosineDecayLR { initial_lr: 0.001, final_lr: 0.001 * 0.3f32.powi(5), final_superbatch: sbs },
-        save_rate: 10,
+        save_rate: 5,
     };
 
     let settings =
