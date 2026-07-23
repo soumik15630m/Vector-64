@@ -300,6 +300,8 @@ void EngineSearch::set_lazy_eval_margin(int cp) {
   lazyEvalMargin_ = std::clamp(cp, 0, 5000);
 }
 
+void EngineSearch::set_persist_ordering(bool v) { persistOrdering_ = v; }
+
 void EngineSearch::clear() {
   tt_->clear();
   ordering_.clear();
@@ -1020,7 +1022,12 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
   syzygyActive_ = Syzygy::active();
   syzygyPieces_ = Syzygy::max_pieces();
 
-  ordering_.clear();
+  // Normal play zeros the ordering tables every search (deterministic, and the
+  // cost is nothing next to a full move's search). Datagen fires thousands of
+  // ~1ms fixed-node searches, where zeroing ~857 KB each time dominates -- so
+  // it opts to keep history warm across the game (reset per game via clear()).
+  if (!persistOrdering_)
+    ordering_.clear();
   ordering_.age_history();
 
   Core::MoveList rootMoves;

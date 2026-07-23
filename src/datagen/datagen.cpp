@@ -102,6 +102,8 @@ struct Shared {
 void worker(const Params &p, Shared &sh) {
   Search::EngineSearch search(size_t(p.hashMb));
   search.set_threads(1);
+  search.set_persist_ordering(
+      true); // warm history across a game's short searches
   if (!p.net.empty())
     search.load_nnue(p.net);
 
@@ -132,25 +134,26 @@ void worker(const Params &p, Shared &sh) {
     if (tries >= 64)
       continue;
 
-    search.clear(); // fresh TT: games are independent
+    search.clear(); // fresh TT + ordering: games are independent
     std::unordered_map<uint64_t, int> seen;
     std::vector<std::pair<std::string, int>> rec;
     double wdl = 0.5;
     int plies = 0;
     while (true) {
-      Core::MoveList legal;
-      Core::generate_legal_moves(pos, legal);
-      if (legal.size() == 0) { // checkmate or stalemate
-        wdl = pos.in_check() ? (pos.side_to_move() == Core::WHITE ? 0.0 : 1.0)
-                             : 0.5;
-        break;
-      }
+      // Cheap draw checks first -- no move generation.
       if (++seen[pos.hash()] >= 3 || pos.halfmove_clock() >= 100 ||
           insufficient_material(pos) || plies >= p.maxPlies) {
         wdl = 0.5;
         break;
       }
+      // The search generates its own root moves; a null best move means there
+      // were none -> checkmate (in check) or stalemate. So no separate movegen.
       const Search::Result r = search.search(pos, limits, cb);
+      if (!r.bestMove.is_ok()) {
+        wdl = pos.in_check() ? (pos.side_to_move() == Core::WHITE ? 0.0 : 1.0)
+                             : 0.5;
+        break;
+      }
       if (plies >= p.skipPlies && !pos.in_check()) {
         const int evalWhite =
             pos.side_to_move() == Core::WHITE ? r.scoreCp : -r.scoreCp;

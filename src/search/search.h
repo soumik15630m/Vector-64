@@ -56,6 +56,11 @@ public:
   void set_threads(int threads);
   void set_small_net_threshold(int cp);
   void set_lazy_eval_margin(int cp);
+  // Datagen: keep move-ordering history warm across the many short fixed-node
+  // searches of one game instead of zeroing ~857 KB of tables every call.
+  // Off by default so normal play (and the bench signature) is unchanged;
+  // callers reset per game via clear().
+  void set_persist_ordering(bool v);
   void clear();
   bool load_nnue(const std::string &path);
   bool load_nnue_small(const std::string &path);
@@ -149,6 +154,9 @@ private:
   // Lazy eval: |PSQT side-output| above this (cp) skips the big net's dense
   // layers. 0 = off (always full forward). Tuned via UCI / SPRT.
   int lazyEvalMargin_ = 0;
+  // Datagen: when set, search_internal keeps the ordering history warm across
+  // calls (no per-search clear). See set_persist_ordering.
+  bool persistOrdering_ = false;
 
 #ifdef ENGINE_PROF
   // Cycle attribution for the hot-path audit (rdtsc; build with -DENGINE_PROF).
