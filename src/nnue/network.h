@@ -391,6 +391,63 @@ inline void acc_fused2(int16_t *RESTRICT dstW, const int16_t *RESTRICT srcW,
     _mm256_storeu_si256(reinterpret_cast<__m256i *>(dstB + h), u);
   }
 #elif defined(__ARM_NEON)
+  // NEON analogues of the AVX2 fast paths. The quiet move (1 add, 1 sub per
+  // perspective) and the capture (1 add, 2 sub) dominate, so peel them out of
+  // the data-dependent inner loops and unroll 2x128-bit to give the CPU two
+  // independent chains that hide the vadd/vsub + load latency. Bit-identical:
+  // int16 add/sub is modular, so (src - sub) + add == src + add - sub mod 2^16.
+  if (naW == 1 && nrW == 1 && naB == 1 && nrB == 1) {
+    const int16_t *RESTRICT aw = addW[0];
+    const int16_t *RESTRICT sw = subW[0];
+    const int16_t *RESTRICT ab = addB[0];
+    const int16_t *RESTRICT sb = subB[0];
+    for (int h = 0; h < H; h += 16) {
+      int16x8_t v0 = vsubq_s16(vld1q_s16(srcW + h), vld1q_s16(sw + h));
+      int16x8_t v1 = vsubq_s16(vld1q_s16(srcW + h + 8), vld1q_s16(sw + h + 8));
+      int16x8_t u0 = vsubq_s16(vld1q_s16(srcB + h), vld1q_s16(sb + h));
+      int16x8_t u1 = vsubq_s16(vld1q_s16(srcB + h + 8), vld1q_s16(sb + h + 8));
+      v0 = vaddq_s16(v0, vld1q_s16(aw + h));
+      v1 = vaddq_s16(v1, vld1q_s16(aw + h + 8));
+      u0 = vaddq_s16(u0, vld1q_s16(ab + h));
+      u1 = vaddq_s16(u1, vld1q_s16(ab + h + 8));
+      vst1q_s16(dstW + h, v0);
+      vst1q_s16(dstW + h + 8, v1);
+      vst1q_s16(dstB + h, u0);
+      vst1q_s16(dstB + h + 8, u1);
+    }
+    return;
+  }
+  if (naW == 1 && nrW == 2 && naB == 1 && nrB == 2) {
+    const int16_t *RESTRICT aw = addW[0];
+    const int16_t *RESTRICT sw0 = subW[0];
+    const int16_t *RESTRICT sw1 = subW[1];
+    const int16_t *RESTRICT ab = addB[0];
+    const int16_t *RESTRICT sb0 = subB[0];
+    const int16_t *RESTRICT sb1 = subB[1];
+    for (int h = 0; h < H; h += 16) {
+      int16x8_t v0 =
+          vsubq_s16(vsubq_s16(vld1q_s16(srcW + h), vld1q_s16(sw0 + h)),
+                    vld1q_s16(sw1 + h));
+      int16x8_t v1 =
+          vsubq_s16(vsubq_s16(vld1q_s16(srcW + h + 8), vld1q_s16(sw0 + h + 8)),
+                    vld1q_s16(sw1 + h + 8));
+      int16x8_t u0 =
+          vsubq_s16(vsubq_s16(vld1q_s16(srcB + h), vld1q_s16(sb0 + h)),
+                    vld1q_s16(sb1 + h));
+      int16x8_t u1 =
+          vsubq_s16(vsubq_s16(vld1q_s16(srcB + h + 8), vld1q_s16(sb0 + h + 8)),
+                    vld1q_s16(sb1 + h + 8));
+      v0 = vaddq_s16(v0, vld1q_s16(aw + h));
+      v1 = vaddq_s16(v1, vld1q_s16(aw + h + 8));
+      u0 = vaddq_s16(u0, vld1q_s16(ab + h));
+      u1 = vaddq_s16(u1, vld1q_s16(ab + h + 8));
+      vst1q_s16(dstW + h, v0);
+      vst1q_s16(dstW + h + 8, v1);
+      vst1q_s16(dstB + h, u0);
+      vst1q_s16(dstB + h + 8, u1);
+    }
+    return;
+  }
   for (int h = 0; h < H; h += 8) {
     int16x8_t v = vld1q_s16(srcW + h);
     int16x8_t u = vld1q_s16(srcB + h);
