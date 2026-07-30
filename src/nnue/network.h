@@ -163,9 +163,9 @@ inline int dot(const uint8_t *RESTRICT a, const int8_t *RESTRICT w, int n) {
   int i = 0;
 #if defined(__ARM_FEATURE_DOTPROD)
   // ARMv8.2 dot-product (SDOT): four int8*int8 products into each int32 lane --
-  // the NEON analogue of x86 maddubs+madd, ~2-4x the vmull path. Activations are
-  // clipped to [0,ACT_MAX=127], so their uint8 bytes reinterpret to identical
-  // int8 values: bit-exact with the scalar int(uint8)*int(int8).
+  // the NEON analogue of x86 maddubs+madd, ~2-4x the vmull path. Activations
+  // are clipped to [0,ACT_MAX=127], so their uint8 bytes reinterpret to
+  // identical int8 values: bit-exact with the scalar int(uint8)*int(int8).
   for (; i + 16 <= n; i += 16)
     acc = vdotq_s32(acc, vreinterpretq_s8_u8(vld1q_u8(a + i)), vld1q_s8(w + i));
 #else
