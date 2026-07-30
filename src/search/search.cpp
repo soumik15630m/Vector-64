@@ -9,10 +9,10 @@
 #include <thread>
 
 #ifdef ENGINE_PROF
+#include "../prof.h"
 #include <cstdio>
-#include <x86intrin.h>
-#define PROF_T0 const uint64_t profT0 = __rdtsc()
-#define PROF_ADD(cyc, cnt) (cyc) += __rdtsc() - profT0, ++(cnt)
+#define PROF_T0 const uint64_t profT0 = prof::now()
+#define PROF_ADD(cyc, cnt) (cyc) += prof::now() - profT0, ++(cnt)
 #else
 #define PROF_T0 (void)0
 #define PROF_ADD(cyc, cnt) (void)0
@@ -1177,6 +1177,32 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
       (unsigned long long)profUpds_, (unsigned long long)profSmallEvals_,
       (unsigned long long)profEvalCyc_, (unsigned long long)profUpdCyc_,
       (unsigned long long)profSmallCyc_);
+  // NNUE forward sub-stage breakdown (big net): where the dense eval spends its
+  // ticks. Ticks are arch-specific (x86 TSC / arm64 cntvct) — read the %.
+  {
+    const auto &f = prof::fwd;
+    const uint64_t fwdTot = f.pairwiseCyc + f.l1Cyc + f.l2Cyc + f.outCyc;
+    const double fp = fwdTot ? 100.0 / (double)fwdTot : 0.0;
+    std::fprintf(stderr,
+                 "PROF-FWD forwards=%llu pairwise=%llu(%.1f%%) l1=%llu(%.1f%%) "
+                 "l2=%llu(%.1f%%) out=%llu(%.1f%%)\n",
+                 (unsigned long long)f.forwards,
+                 (unsigned long long)f.pairwiseCyc, (double)f.pairwiseCyc * fp,
+                 (unsigned long long)f.l1Cyc, (double)f.l1Cyc * fp,
+                 (unsigned long long)f.l2Cyc, (double)f.l2Cyc * fp,
+                 (unsigned long long)f.outCyc, (double)f.outCyc * fp);
+    // Accumulator update: incremental (acc_fused2) vs king-move refresh (the
+    // memory-heavy full FT gather) — the classic NNUE memory bottleneck.
+    const uint64_t updTot = f.updIncrCyc + f.updKingCyc;
+    const double up = updTot ? 100.0 / (double)updTot : 0.0;
+    std::fprintf(
+        stderr,
+        "PROF-UPD incr=%llu/%lluc(%.1f%%) kingRefresh=%llu/%lluc(%.1f%%)\n",
+        (unsigned long long)f.updIncr, (unsigned long long)f.updIncrCyc,
+        (double)f.updIncrCyc * up, (unsigned long long)f.updKing,
+        (unsigned long long)f.updKingCyc, (double)f.updKingCyc * up);
+    prof::fwd.reset();
+  }
   profEvalCyc_ = profUpdCyc_ = profSmallCyc_ = 0;
   profEvals_ = profUpds_ = profSmallEvals_ = 0;
 #endif

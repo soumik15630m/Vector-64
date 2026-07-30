@@ -3,6 +3,7 @@
 
 #include "../cores/bitboard.h"
 #include "../cores/position.h"
+#include "../prof.h"
 #include "halfka.h"
 
 #include <array>
@@ -867,6 +868,7 @@ public:
               const Core::UndoInfo &ui,
               RefreshTableT<H> *table = nullptr) const {
     using namespace Core;
+    STK_PROF_T0();
     const DirtyMove dm = make_dirty(after, m, ui);
 
     if (!dm.kingMoved) {
@@ -907,6 +909,7 @@ public:
                             addC[WHITE], na[WHITE], subC[WHITE], nr[WHITE],
                             child.acc[BLACK].data(), parent.acc[BLACK].data(),
                             addC[BLACK], na[BLACK], subC[BLACK], nr[BLACK]);
+      STK_PROF_END(updIncrCyc, updIncr);
       return;
     }
 
@@ -923,6 +926,7 @@ public:
       }
       child.computed[persp] = true;
     }
+    STK_PROF_END(updKingCyc, updKing);
   }
 
   int evaluate(const Core::Position &pos, const AccumulatorT<H> &a) const {
@@ -990,8 +994,10 @@ private:
     // Deliberately uninitialized: pairwise/the layer loops write every byte,
     // and value-init here would memset ~1KB per eval.
     alignas(32) std::array<uint8_t, H> l1in;
+    STK_PROF_T0();
     detail::pairwise<H>(us.data(), l1in.data());
     detail::pairwise<H>(them.data(), l1in.data() + PAIR);
+    STK_PROF_LAP(pairwiseCyc);
 
     const Bucket &b = buckets_[bucket];
 
@@ -1018,6 +1024,7 @@ private:
       l1o[o] = detail::clip(s >> Arch::L1_SHIFT);
     }
 #endif
+    STK_PROF_LAP(l1Cyc);
 
     alignas(32) std::array<uint8_t, Arch::L2> l2o;
 #if defined(__AVX2__)
@@ -1043,12 +1050,14 @@ private:
       l2o[o] = detail::clip(s >> Arch::L2_SHIFT);
     }
 #endif
+    STK_PROF_LAP(l2Cyc);
 
     const int raw = b.outb + detail::dot(l2o.data(), b.outw.data(), Arch::L2);
     const int positional = raw >> Arch::OUT_SHIFT;
     const int psqtTerm =
         (a.psqt[stm][bucket] - a.psqt[~stm][bucket]) >> Arch::PSQT_SHIFT;
     const int eval = positional + psqtTerm;
+    STK_PROF_END(outCyc, forwards);
 
     if (probe) {
       std::copy(us.begin(), us.end(), probe->accUs.begin());
