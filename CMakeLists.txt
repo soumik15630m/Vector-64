@@ -126,16 +126,27 @@ set_target_properties(ChessEngine PROPERTIES
 # above is unchanged. Override the net with -DEMBED_NNUE=/path/to/net.nnue.
 set(EMBED_NNUE "${CMAKE_SOURCE_DIR}/nets/stk-vector-64.nnue"
         CACHE FILEPATH "Net embedded into the ChessEngine-nnue binary")
-if(EXISTS "${EMBED_NNUE}" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
-        enable_language(ASM)
+if(EXISTS "${EMBED_NNUE}" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|MSVC")
         set(STK_EMBED_NNUE_PATH "${EMBED_NNUE}")
-        configure_file(src/nnue/embedded_net.S.in
-                ${CMAKE_BINARY_DIR}/embedded_net.S @ONLY)
+        set(_nnue_embed src/nnue/embedded_net.cpp)
+        if(MSVC)
+                # Windows resource (RCDATA); accessed via FindResource.
+                enable_language(RC)
+                configure_file(src/nnue/embedded_net.rc.in
+                        ${CMAKE_BINARY_DIR}/embedded_net.rc @ONLY)
+                list(APPEND _nnue_embed ${CMAKE_BINARY_DIR}/embedded_net.rc)
+        else()
+                # GNU-as .incbin (ELF: Linux, Mach-O: macOS, PE-COFF: MinGW).
+                enable_language(ASM)
+                configure_file(src/nnue/embedded_net.S.in
+                        ${CMAKE_BINARY_DIR}/embedded_net.S @ONLY)
+                list(APPEND _nnue_embed ${CMAKE_BINARY_DIR}/embedded_net.S)
+        endif()
         add_executable(ChessEngine-nnue
                 app/main.cpp
                 tests/cpp/perfts.cpp
                 tests/cpp/perfts.h
-                ${CMAKE_BINARY_DIR}/embedded_net.S
+                ${_nnue_embed}
         )
         target_compile_definitions(ChessEngine-nnue PRIVATE STK_EMBED_NNUE)
         target_include_directories(ChessEngine-nnue PRIVATE tests/cpp)
@@ -144,7 +155,7 @@ if(EXISTS "${EMBED_NNUE}" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT 
                 RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
         message(STATUS "NNUE binary: ChessEngine-nnue embeds ${EMBED_NNUE}")
 else()
-        message(STATUS "NNUE binary: skipped (net '${EMBED_NNUE}' missing or non-GNU/Clang toolchain)")
+        message(STATUS "NNUE binary: skipped (net '${EMBED_NNUE}' missing or unsupported toolchain)")
 endif()
 
 add_executable(test_zobrist tests/cpp/test_zobrist.cpp)

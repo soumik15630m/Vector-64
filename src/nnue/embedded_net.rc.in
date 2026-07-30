@@ -1,0 +1,5 @@
+// Windows resource script (MSVC): embeds the default net as an RCDATA blob
+// reached via FindResource(L"STK_EMBEDDED_NET", RT_RCDATA) in embedded_net.cpp.
+// CMake substitutes the absolute net path (configure_file). rc.exe accepts a
+// forward-slash path.
+STK_EMBEDDED_NET RCDATA "@STK_EMBED_NNUE_PATH@"

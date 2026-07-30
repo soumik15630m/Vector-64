@@ -1,8 +1,20 @@
-/* Embeds a .nnue file into the binary via GNU as `.incbin`. CMake generates
+/* Embeds a .nnue file into the binary via GNU-as `.incbin`. CMake generates
    embedded_net.S from this template (configure_file), substituting the absolute
-   net path. Works for ELF (Linux) and PE-COFF (MinGW) -- both GNU/Clang, no
-   leading underscore. macOS/MSVC embedding would need a different section/symbol
-   convention (see tools note); the NNUE target is gated to GNU/Clang for now. */
+   net path. The .S extension runs the C preprocessor, so one file covers both
+   object formats: Mach-O (macOS: __TEXT,__const section + leading-underscore
+   symbols) and ELF / PE-COFF (Linux, MinGW: .rodata, no underscore). MSVC uses
+   a Windows RCDATA resource instead (embedded_net.rc) -- this file is not built
+   there. The two labels bracket the image; embedded_net.cpp computes the size
+   from their difference. */
+#if defined(__APPLE__)
+    .section __TEXT,__const
+    .p2align 6
+    .globl _stk_embedded_net_data
+_stk_embedded_net_data:
+    .incbin "@STK_EMBED_NNUE_PATH@"
+    .globl _stk_embedded_net_end
+_stk_embedded_net_end:
+#else
     .section .rodata
     .balign 64
     .global stk_embedded_net_data
@@ -10,3 +22,4 @@ stk_embedded_net_data:
     .incbin "@STK_EMBED_NNUE_PATH@"
     .global stk_embedded_net_end
 stk_embedded_net_end:
+#endif
