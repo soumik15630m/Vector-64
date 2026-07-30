@@ -160,6 +160,15 @@ inline int dot(const uint8_t *RESTRICT a, const int8_t *RESTRICT w, int n) {
 #elif defined(__ARM_NEON)
   int32x4_t acc = vdupq_n_s32(0);
   int i = 0;
+#if defined(__ARM_FEATURE_DOTPROD)
+  // ARMv8.2 dot-product (SDOT): four int8*int8 products into each int32 lane --
+  // the NEON analogue of x86 maddubs+madd, ~2-4x the vmull path. Activations are
+  // clipped to [0,ACT_MAX=127], so their uint8 bytes reinterpret to identical
+  // int8 values: bit-exact with the scalar int(uint8)*int(int8).
+  for (; i + 16 <= n; i += 16)
+    acc = vdotq_s32(acc, vreinterpretq_s8_u8(vld1q_u8(a + i)), vld1q_s8(w + i));
+#else
+  // Pre-8.2 NEON fallback: widening multiply + pairwise-accumulate.
   for (; i + 16 <= n; i += 16) {
     const uint8x16_t va = vld1q_u8(a + i);
     const int8x16_t vw = vld1q_s8(w + i);
@@ -172,6 +181,7 @@ inline int dot(const uint8_t *RESTRICT a, const int8_t *RESTRICT w, int n) {
     acc = vpadalq_s16(acc, lo);
     acc = vpadalq_s16(acc, hi);
   }
+#endif
   int sum = vaddvq_s32(acc);
   for (; i < n; ++i)
     sum += static_cast<int>(a[i]) * static_cast<int>(w[i]);

@@ -144,6 +144,24 @@ jobs:
       # build-independent, like the classical signature.
       - run: chmod +x ChessEngine-nnue && bash tools/bench_signature.sh ./ChessEngine-nnue nnue
 
+  # ---- ARM/NEON: the x86 jobs above never exercise the NEON kernels; this one
+  # builds on real ARM with the dot-product extension (SDOT path) and proves the
+  # NEON eval is bit-exact with scalar, plus both node-count signatures match. ----
+  arm-neon-nnue:
+    name: arm · neon nnue (simd==scalar) + bench
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      # +dotprod defines __ARM_FEATURE_DOTPROD so the SDOT dot() path is built
+      # (ARMv8.2+; the CI runners are Graviton/Ampere-class).
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_NATIVE=OFF -DCMAKE_CXX_FLAGS="-march=armv8.2-a+dotprod" && cmake --build build -j
+      - name: NEON == scalar (bit-exact NNUE inference)
+        run: ./build/bin/test_zobrist nnue
+      - name: classical bench signature (build-independent)
+        run: bash tools/bench_signature.sh ./build/bin/ChessEngine
+      - name: nnue bench signature (build-independent)
+        run: bash tools/bench_signature.sh ./build/bin/ChessEngine-nnue nnue
+
   # ---- UCI behaviour: one check per behaviour group ----
   uci-protocol:
     name: uci · protocol
