@@ -483,6 +483,39 @@ inline void dot8(const uint8_t *RESTRICT a, const int8_t *RESTRICT w,
 }
 #endif
 
+#if defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+// NEON analogues of dot8 / dot4x16w: several output rows share each activation
+// load, accumulating via SDOT. Exact int32 sums, so bit-exact with per-row
+// dot(). Activations are uint8 in [0,ACT_MAX=127], reinterpreted to identical
+// int8. n must be a multiple of 16 (H and L1 both are).
+inline void dot8_neon(const uint8_t *RESTRICT a, const int8_t *RESTRICT w,
+                      size_t stride, int n, int32_t out[8]) {
+  int32x4_t c[8];
+  for (int r = 0; r < 8; ++r)
+    c[r] = vdupq_n_s32(0);
+  for (int i = 0; i < n; i += 16) {
+    const int8x16_t va = vreinterpretq_s8_u8(vld1q_u8(a + i));
+    for (int r = 0; r < 8; ++r)
+      c[r] = vdotq_s32(c[r], va, vld1q_s8(w + r * stride + i));
+  }
+  for (int r = 0; r < 8; ++r)
+    out[r] = vaddvq_s32(c[r]);
+}
+
+inline void dot4x16_neon(const uint8_t *RESTRICT a, const int8_t *RESTRICT w,
+                         int n, int32_t out[4]) {
+  int32x4_t c[4] = {vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0),
+                    vdupq_n_s32(0)};
+  for (int i = 0; i < n; i += 16) {
+    const int8x16_t va = vreinterpretq_s8_u8(vld1q_u8(a + i));
+    for (int r = 0; r < 4; ++r)
+      c[r] = vdotq_s32(c[r], va, vld1q_s8(w + r * n + i));
+  }
+  for (int r = 0; r < 4; ++r)
+    out[r] = vaddvq_s32(c[r]);
+}
+#endif
+
 template <int H>
 inline void acc_sub(int16_t *RESTRICT acc, const int16_t *RESTRICT col) {
 #if defined(__AVX2__)
@@ -972,6 +1005,13 @@ private:
       for (int j = 0; j < 8; ++j)
         l1o[o + j] = detail::clip((b.l1b[o + j] + sums[j]) >> Arch::L1_SHIFT);
     }
+#elif defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    for (int o = 0; o < Arch::L1; o += 8) {
+      alignas(16) int32_t sums[8];
+      detail::dot8_neon(l1in.data(), &b.l1w[o * H], H, H, sums);
+      for (int j = 0; j < 8; ++j)
+        l1o[o + j] = detail::clip((b.l1b[o + j] + sums[j]) >> Arch::L1_SHIFT);
+    }
 #else
     for (int o = 0; o < Arch::L1; ++o) {
       const int s = b.l1b[o] + detail::dot(l1in.data(), &b.l1w[o * H], H);
@@ -986,6 +1026,13 @@ private:
       _mm_store_si128(
           reinterpret_cast<__m128i *>(sums),
           detail::dot4x16w(l1o.data(), &b.l2w[o * Arch::L1], Arch::L1));
+      for (int j = 0; j < 4; ++j)
+        l2o[o + j] = detail::clip((b.l2b[o + j] + sums[j]) >> Arch::L2_SHIFT);
+    }
+#elif defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    for (int o = 0; o < Arch::L2; o += 4) {
+      alignas(16) int32_t sums[4];
+      detail::dot4x16_neon(l1o.data(), &b.l2w[o * Arch::L1], Arch::L1, sums);
       for (int j = 0; j < 4; ++j)
         l2o[o + j] = detail::clip((b.l2b[o + j] + sums[j]) >> Arch::L2_SHIFT);
     }
