@@ -1,6 +1,9 @@
 #include "datagen/datagen.h"
 #include "perfts.h"
 #include "uci/uci.h"
+#ifdef STK_EMBED_NNUE
+#include "nnue/embedded_net.h"
+#endif
 #include <charconv>
 #include <cstdint>
 #include <filesystem>
@@ -85,7 +88,11 @@ int main(int argc, char **argv) {
       return run_epd_test_suite(epdPath, 5);
     }
 
+#ifdef STK_EMBED_NNUE
+    return UCI::run(NNUE::embedded_net_data(), NNUE::embedded_net_size());
+#else
     return UCI::run();
+#endif
   } catch (const std::exception &e) {
     std::cerr << "[FATAL] " << e.what() << '\n';
     return 2;

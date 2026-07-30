@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <iostream>
 #include <mutex>
 #include <sstream>
@@ -161,12 +162,18 @@ bool parse_u64(const std::string &token, uint64_t &out) {
 
 class EngineUci {
 public:
-  EngineUci() {
+  // `embeddedNet` (if non-null) is the default net baked into the NNUE binary,
+  // supplied by main() -- loaded so the engine plays with NNUE out of the box
+  // (setoption EvalFile still overrides). The classical binary passes nullptr.
+  explicit EngineUci(const unsigned char *embeddedNet = nullptr,
+                     std::size_t embeddedNetSize = 0) {
     const unsigned hc = std::max(1u, std::thread::hardware_concurrency());
     threads_ = static_cast<int>(hc);
     position_.setFromFEN(STANDARD_STARTPOS_FEN);
     search_.set_hash_mb(static_cast<size_t>(hashMb_));
     search_.set_threads(threads_);
+    if (embeddedNet && embeddedNetSize)
+      search_.load_nnue_buffer(embeddedNet, embeddedNetSize);
   }
 
   ~EngineUci() { stop_and_join(true); }
@@ -883,11 +890,11 @@ private:
 };
 } // namespace
 
-int run() {
+int run(const unsigned char *embeddedNet, std::size_t embeddedNetSize) {
   Core::Attacks::init();
   Core::Zobrist::init();
 
-  EngineUci app;
+  EngineUci app(embeddedNet, embeddedNetSize);
   return app.loop();
 }
 } // namespace UCI

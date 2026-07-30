@@ -118,6 +118,35 @@ set_target_properties(ChessEngine PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
+# ---------------------------------------------------------------------------
+# NNUE binary: ChessEngine-nnue, with the default net baked into the executable
+# (Stockfish-style, via GNU-as .incbin). Built only when the net exists and the
+# toolchain is GNU/Clang (the embed uses GNU-as directives; MSVC/macOS embedding
+# would need a different section/symbol convention). The classical ChessEngine
+# above is unchanged. Override the net with -DEMBED_NNUE=/path/to/net.nnue.
+set(EMBED_NNUE "${CMAKE_SOURCE_DIR}/nets/stk-vector-64.nnue"
+        CACHE FILEPATH "Net embedded into the ChessEngine-nnue binary")
+if(EXISTS "${EMBED_NNUE}" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
+        enable_language(ASM)
+        set(STK_EMBED_NNUE_PATH "${EMBED_NNUE}")
+        configure_file(src/nnue/embedded_net.S.in
+                ${CMAKE_BINARY_DIR}/embedded_net.S @ONLY)
+        add_executable(ChessEngine-nnue
+                app/main.cpp
+                tests/cpp/perfts.cpp
+                tests/cpp/perfts.h
+                ${CMAKE_BINARY_DIR}/embedded_net.S
+        )
+        target_compile_definitions(ChessEngine-nnue PRIVATE STK_EMBED_NNUE)
+        target_include_directories(ChessEngine-nnue PRIVATE tests/cpp)
+        target_link_libraries(ChessEngine-nnue chess_core)
+        set_target_properties(ChessEngine-nnue PROPERTIES
+                RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+        message(STATUS "NNUE binary: ChessEngine-nnue embeds ${EMBED_NNUE}")
+else()
+        message(STATUS "NNUE binary: skipped (net '${EMBED_NNUE}' missing or non-GNU/Clang toolchain)")
+endif()
+
 add_executable(test_zobrist tests/cpp/test_zobrist.cpp)
 target_link_libraries(test_zobrist chess_core)
 set_target_properties(test_zobrist PROPERTIES

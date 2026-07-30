@@ -15,7 +15,13 @@ ENGINE="${1:?usage: bench_signature.sh <path-to-ChessEngine>}"
 SIG_FILE="$(dirname "$0")/bench_signature.txt"
 
 DEPTH="${BENCH_SIG_DEPTH:-$(grep -E '^DEPTH=' "$SIG_FILE" | cut -d= -f2)}"
-EXPECTED="${BENCH_SIG_NODES:-$(grep -E '^NODES=' "$SIG_FILE" | cut -d= -f2)}"
+# Second arg "nnue" checks the NNUE binary (embedded net) against NODES_NNUE;
+# otherwise the classical binary against NODES. BENCH_SIG_NODES overrides both.
+if [ "${2:-classical}" = "nnue" ]; then
+  EXPECTED="${BENCH_SIG_NODES:-$(grep -E '^NODES_NNUE=' "$SIG_FILE" | cut -d= -f2)}"
+else
+  EXPECTED="${BENCH_SIG_NODES:-$(grep -E '^NODES=' "$SIG_FILE" | cut -d= -f2)}"
+fi
 
 got=$(printf "setoption name Threads value 1\nsetoption name Hash value 8\nbench %s\nquit\n" "$DEPTH" \
   | "$ENGINE" 2>/dev/null | grep -oE "nodes [0-9]+" | grep -oE "[0-9]+" | head -1)

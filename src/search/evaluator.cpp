@@ -10,6 +10,10 @@ bool Evaluator::load_nnue_small(const std::string &path) {
   return small_.load_file(path);
 }
 
+bool Evaluator::load_nnue_buffer(const unsigned char *data, size_t size) {
+  return big_.load_buffer(data, size);
+}
+
 // With a net loaded the score is pure NNUE: the network carries its own
 // PSQT side-output, so blending the hand-written PSQT back in would
 // double-count material and skew the trained evaluation.

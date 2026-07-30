@@ -64,6 +64,8 @@ public:
   void clear();
   bool load_nnue(const std::string &path);
   bool load_nnue_small(const std::string &path);
+  // Load the big net from an in-memory image (the embedded default net).
+  bool load_nnue_buffer(const unsigned char *data, size_t size);
   // Load Syzygy tablebases from a directory list; true if any were found.
   bool load_syzygy(const std::string &path);
   int evaluate(const Core::Position &pos);

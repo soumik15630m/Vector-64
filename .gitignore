@@ -41,6 +41,8 @@ env/
 /artifacts/
 /tools/data/
 *.nnue
+# ...except the one shipped default net embedded into the ChessEngine-nnue binary.
+!nets/*.nnue
 *.npz
 *.pt
 *.ckpt

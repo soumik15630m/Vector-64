@@ -27,6 +27,7 @@ jobs:
           name: engine-linux
           path: |
             build/bin/ChessEngine
+            build/bin/ChessEngine-nnue
             build/bin/test_zobrist
 
   # ---- perft: one check per reference position (all depths) ----
@@ -129,6 +130,19 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: engine-linux }
       - run: chmod +x ChessEngine && bash tools/bench_signature.sh ./ChessEngine
+
+  bench-signature-nnue:
+    name: search · bench signature (nnue binary)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: engine-linux }
+      # The NNUE binary embeds nets/stk-vector-64.nnue; its bench node count is
+      # a fingerprint of (search + that net). SIMD==scalar bit-exactness makes it
+      # build-independent, like the classical signature.
+      - run: chmod +x ChessEngine-nnue && bash tools/bench_signature.sh ./ChessEngine-nnue nnue
 
   # ---- UCI behaviour: one check per behaviour group ----
   uci-protocol:

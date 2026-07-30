@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <istream>
+#include <streambuf>
 #include <string>
 #include <vector>
 
@@ -556,7 +558,23 @@ public:
     std::ifstream in(path, std::ios::binary);
     if (!in)
       return false;
+    return load_stream(in);
+  }
 
+  // Load from an in-memory image -- the same on-disk layout as load_file, used
+  // for the net embedded into the binary (see src/nnue/embedded_net.*).
+  bool load_buffer(const unsigned char *data, size_t size) {
+    struct membuf : std::streambuf {
+      membuf(const char *b, size_t n) {
+        char *p = const_cast<char *>(b);
+        setg(p, p, p + n);
+      }
+    } mb(reinterpret_cast<const char *>(data), size);
+    std::istream in(&mb);
+    return load_stream(in);
+  }
+
+  bool load_stream(std::istream &in) {
     char magic[9];
     uint32_t version = 0, feat = 0, hidden = 0, buckets = 0;
     in.read(magic, sizeof(magic));

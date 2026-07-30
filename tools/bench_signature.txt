@@ -10,3 +10,7 @@
 #   bash tools/update_bench_signature.sh <path-to-ChessEngine>
 DEPTH=13
 NODES=5253789
+# NNUE binary (ChessEngine-nnue, net embedded): same depth, NNUE eval. Net-
+# specific -- regenerate with update_bench_signature.sh whenever the embedded
+# net (nets/stk-vector-64.nnue) changes.
+NODES_NNUE=2926142

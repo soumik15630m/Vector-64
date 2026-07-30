@@ -311,6 +311,10 @@ bool EngineSearch::load_nnue(const std::string &path) {
   return evaluator_.load_nnue(path);
 }
 
+bool EngineSearch::load_nnue_buffer(const unsigned char *data, size_t size) {
+  return evaluator_.load_nnue_buffer(data, size);
+}
+
 bool EngineSearch::load_nnue_small(const std::string &path) {
   return evaluator_.load_nnue_small(path);
 }

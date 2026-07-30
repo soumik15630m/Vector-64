@@ -58,11 +58,16 @@ jobs:
         run: |
           mkdir -p dist
           if [ "${{ runner.os }}" = "Windows" ]; then cp build/bin/Release/ChessEngine.exe "dist/${{ matrix.asset }}"; else cp build/bin/ChessEngine "dist/${{ matrix.asset }}"; fi
+          # NNUE build (net embedded) where the toolchain produced one (GNU/Clang,
+          # non-Apple -> the Linux targets); ship it beside the classical binary.
+          if [ -f build/bin/ChessEngine-nnue ]; then
+            cp build/bin/ChessEngine-nnue "dist/$(echo "${{ matrix.asset }}" | sed 's/\(\.exe\)\?$/-nnue\1/')"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: dist/${{ matrix.asset }}
+          path: dist/*
 
   release:
     needs: build

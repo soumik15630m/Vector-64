@@ -1,0 +1,12 @@
+/* Embeds a .nnue file into the binary via GNU as `.incbin`. CMake generates
+   embedded_net.S from this template (configure_file), substituting the absolute
+   net path. Works for ELF (Linux) and PE-COFF (MinGW) -- both GNU/Clang, no
+   leading underscore. macOS/MSVC embedding would need a different section/symbol
+   convention (see tools note); the NNUE target is gated to GNU/Clang for now. */
+    .section .rodata
+    .balign 64
+    .global stk_embedded_net_data
+stk_embedded_net_data:
+    .incbin "@STK_EMBED_NNUE_PATH@"
+    .global stk_embedded_net_end
+stk_embedded_net_end:

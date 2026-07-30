@@ -7,7 +7,8 @@
 
 set -euo pipefail
 
-ENGINE="${1:?usage: update_bench_signature.sh <path-to-ChessEngine>}"
+ENGINE="${1:?usage: update_bench_signature.sh <ChessEngine> [<ChessEngine-nnue>]}"
+NNUE_ENGINE="${2:-}"
 SIG_FILE="$(dirname "$0")/bench_signature.txt"
 DEPTH="$(grep -E '^DEPTH=' "$SIG_FILE" | cut -d= -f2)"
 OLD="$(grep -E '^NODES=' "$SIG_FILE" | cut -d= -f2)"
@@ -30,4 +31,17 @@ fi
 
 sed -i -E "s/^NODES=.*/NODES=$got/" "$SIG_FILE"
 echo "bench signature updated: $OLD -> $got (depth $DEPTH, 1 thread, 8 MB hash)"
-echo "review and commit tools/bench_signature.txt alongside the search change."
+
+# NNUE binary signature (embedded net), if a second engine is given.
+if [ -n "$NNUE_ENGINE" ]; then
+  ngot=$(printf "setoption name Threads value 1\nsetoption name Hash value 8\nbench %s\nquit\n" "$DEPTH" \
+    | "$NNUE_ENGINE" 2>/dev/null | grep -oE "nodes [0-9]+" | grep -oE "[0-9]+" | head -1)
+  if [ -z "${ngot:-}" ]; then
+    echo "no bench output from $NNUE_ENGINE (crash?)"
+    exit 1
+  fi
+  nold="$(grep -E '^NODES_NNUE=' "$SIG_FILE" | cut -d= -f2)"
+  sed -i -E "s/^NODES_NNUE=.*/NODES_NNUE=$ngot/" "$SIG_FILE"
+  echo "NNUE bench signature updated: $nold -> $ngot"
+fi
+echo "review and commit tools/bench_signature.txt alongside the search/net change."
