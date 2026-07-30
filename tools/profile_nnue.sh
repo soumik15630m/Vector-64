@@ -19,12 +19,30 @@ DEPTH="${1:-13}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/build-prof"
 
+NET="$ROOT/nets/stk-vector-64.nnue"
+if [ ! -f "$NET" ]; then
+  echo "ERROR: embedded net missing: $NET"
+  echo "It is git-tracked (~45 MB). Fetch it, then re-run:"
+  echo "  git -C \"$ROOT\" pull"
+  exit 1
+fi
+
+CFGLOG="$(mktemp)"
 echo "[1/3] configuring $BUILD (-DENGINE_PROF, Release, native march)"
-cmake -S "$ROOT" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_CXX_FLAGS="-DENGINE_PROF" >/dev/null
+if ! cmake -S "$ROOT" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release \
+     -DCMAKE_CXX_FLAGS="-DENGINE_PROF" >"$CFGLOG" 2>&1; then
+  cat "$CFGLOG"; rm -f "$CFGLOG"; exit 1
+fi
+grep -iE 'NNUE binary:|^-- Compiler:' "$CFGLOG" || true
+rm -f "$CFGLOG"
 
 echo "[2/3] building ChessEngine-nnue"
-cmake --build "$BUILD" --target ChessEngine-nnue -j >/dev/null
+if ! cmake --build "$BUILD" --target ChessEngine-nnue -j >/dev/null 2>&1; then
+  echo "ERROR: ChessEngine-nnue did not build (see the 'NNUE binary:' line"
+  echo "above). If it says 'skipped', the net is missing or the toolchain is"
+  echo "unsupported; otherwise re-run without -j to see the compile error."
+  exit 1
+fi
 
 # Binary location differs by generator (Unix vs MSVC multi-config).
 EXE="$BUILD/bin/ChessEngine-nnue"
