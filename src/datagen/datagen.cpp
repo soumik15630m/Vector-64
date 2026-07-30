@@ -245,7 +245,8 @@ int run(int argc, char **argv) {
 
   std::cout << "[datagen] " << p.games << " games @ " << p.nodes << " nodes, "
             << p.threads << " threads, emit=" << (p.raw ? "raw" : "blend")
-            << (p.net.empty() ? "" : (", net=" + p.net)) << '\n' << std::flush;
+            << (p.net.empty() ? "" : (", net=" + p.net)) << '\n'
+            << std::flush;
 
   const auto t0 = std::chrono::steady_clock::now();
   std::vector<std::thread> workers;
@@ -274,7 +275,8 @@ int run(int argc, char **argv) {
       std::cout << "  " << g << "/" << p.games << "  " << pos << " pos  "
                 << int(gps) << " g/s  " << int(pos / std::max(el, 1e-9))
                 << " pos/s  W/D/L " << sh.w.load() << "/" << sh.d.load() << "/"
-                << sh.l.load() << "  eta " << eta << "m" << '\n' << std::flush;
+                << sh.l.load() << "  eta " << eta << "m" << '\n'
+                << std::flush;
     }
   }
   joiner.join();
@@ -291,7 +293,8 @@ int run(int argc, char **argv) {
             << el / 60.0 << " min (" << g / std::max(el, 1e-9) << " g/s)\n"
             << "  result (white pov): " << (100 * sh.w.load() / g) << "% W  "
             << (100 * sh.d.load() / g) << "% D  " << (100 * sh.l.load() / g)
-            << "% L  ->  " << p.out << '\n' << std::flush;
+            << "% L  ->  " << p.out << '\n'
+            << std::flush;
   return 0;
 }
 
