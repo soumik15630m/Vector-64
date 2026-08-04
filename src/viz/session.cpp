@@ -70,7 +70,8 @@ Session::Session(Config cfg)
   search_.set_threads(appliedThreads_);
   search_.set_multipv(std::max(1, cfg_.multiPv));
   moveDelayMs_.store(cfg_.moveDelayMs);
-  nodes_.store(cfg_.nodes);
+  nodes_.store(std::max(0, cfg_.nodes));
+  depth_.store(std::clamp(cfg_.depth, 0, max_depth()));
   rngState_ = cfg_.seed ? cfg_.seed : 0x9E3779B97F4A7C15ULL;
   randomOpening_ = cfg_.openingPlies > 0;
   reset_game(randomOpening_);
@@ -134,7 +135,11 @@ void Session::step() {
 
 void Session::set_move_delay(int ms) { moveDelayMs_.store(std::max(0, ms)); }
 
-void Session::set_nodes(int nodes) { nodes_.store(std::max(1, nodes)); }
+void Session::set_nodes(int nodes) { nodes_.store(std::max(0, nodes)); }
+
+int Session::max_depth() { return 64; } // matches the UCI clamp
+
+void Session::set_depth(int d) { depth_.store(std::clamp(d, 0, max_depth())); }
 
 int Session::hardware_threads() {
   const unsigned hc = std::thread::hardware_concurrency();
@@ -362,7 +367,7 @@ void Session::publish() {
   cv_.notify_all();
 }
 
-Search::Result Session::think() {
+Search::Result Session::think(bool ponder) {
   // Thread count changes land here, between searches.
   const int want = threads_.load();
   if (want != appliedThreads_) {
@@ -379,8 +384,12 @@ Search::Result Session::think() {
 
   Search::Limits limits;
   const int n = nodes_.load();
-  limits.maxNodes = n > 0 ? static_cast<uint64_t>(n) : 0;
-  limits.maxDepth = cfg_.depth > 0 ? cfg_.depth : 64;
+  const int d = depth_.load();
+  // Pondering is ONE long search that ends when the opponent moves, not a
+  // stream of short ones. Repeating short searches restarted the display many
+  // times a second, which read as flicker rather than as thinking.
+  limits.maxNodes = ponder ? 0 : (n > 0 ? static_cast<uint64_t>(n) : 0);
+  limits.maxDepth = d > 0 ? d : max_depth();
 
   const bool nnue = search_.evaluator().nnue_active();
 
@@ -427,6 +436,12 @@ Search::Result Session::think() {
     if (nnue)
       f = capture(leaf, search_.evaluator().big(), cfg_.l1TopK);
 
+    if (ponder) {
+      const auto now = std::chrono::steady_clock::now();
+      if (now - lastPublish_ < std::chrono::milliseconds(110))
+        return; // too soon: the previous frame is still what matters
+      lastPublish_ = now;
+    }
     std::lock_guard<std::mutex> lk(mu_);
     snap_.search = std::move(si);
     snap_.thinking = true;
@@ -555,7 +570,7 @@ void Session::human_step() {
     // deciding on, so the network view goes on evolving instead of freezing --
     // this is the engine genuinely thinking on their time, not a replay.
     if (live) {
-      think();
+      think(/*ponder=*/true);
       abortSearch_.store(false);
     }
     publish();

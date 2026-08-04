@@ -111,6 +111,8 @@ export interface EngineState {
   threads: number;
   /** Cores this machine reports; the thread control never exceeds it. */
   hardwareThreads: number;
+  /** Deepest search the engine supports. */
+  maxDepth: number;
   engineColor: number;
   arch: Arch;
   game: GameState;
@@ -127,6 +129,7 @@ export type ControlCommand =
   | { cmd: "nodes"; value: number }
   | { cmd: "threads"; value: number }
   | { cmd: "randomopening"; value: boolean }
+  | { cmd: "depth"; value: number }
   | { cmd: "enginecolor"; value: number }
   | { cmd: "mode"; value: Mode }
   | { cmd: "position"; fen: string; moves: string[] }

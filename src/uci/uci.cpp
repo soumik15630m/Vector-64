@@ -246,7 +246,7 @@ private:
     // the short searches of one game is what datagen does; exposing it here
     // lets the same binary play both ways so the idea can be SPRT-tested
     // before it becomes a default.
-    emit("option name PersistOrdering type check default false");
+    emit("option name PersistOrdering type check default true");
     emit("option name MultiPV type spin default 1 min 1 max 32");
     emit("uciok");
   }

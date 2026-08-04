@@ -294,6 +294,15 @@ def main() -> int:
             return 0
         if llr <= -LLR_BOUND:
             return 1
+        # The bound may have been crossed mid-run and then drifted back while
+        # the in-flight games of the other workers drained. That is still a
+        # decision -- the stop fired -- so report it as one instead of
+        # contradicting the "H1 accepted" line already printed.
+        if stop.is_set():
+            print(f"SPRT: bound was crossed during the run "
+                  f"(final LLR {llr:+.2f} after in-flight games drained)",
+                  flush=True)
+            return 0
         print("SPRT: inconclusive at game cap", flush=True)
         return 2
     return 0

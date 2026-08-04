@@ -69,6 +69,7 @@ std::string encode_state(const Snapshot &s) {
   h["nnueActive"] = s.nnueActive;
   h["threads"] = s.threads;
   h["hardwareThreads"] = Session::hardware_threads();
+  h["maxDepth"] = Session::max_depth();
   h["engineColor"] = s.engineColor;
 
   h["game"] = {{"fen", s.game.fen},
@@ -198,6 +199,8 @@ std::string handle_control(Session &session, const std::string &body,
     session.set_nodes(intVal(20000));
   } else if (cmd == "threads") {
     session.set_threads(intVal(1));
+  } else if (cmd == "depth") {
+    session.set_depth(intVal(0));
   } else if (cmd == "randomopening") {
     session.set_random_opening(j.contains("value") && j["value"].is_boolean()
                                    ? j["value"].get<bool>()

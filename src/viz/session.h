@@ -129,6 +129,10 @@ public:
   // Applied between searches, never during one: set_threads reconfigures lazy
   // SMP and is not safe to change under a running search.
   void set_threads(int n);
+  // 0 = no depth cap (node-limited only). Clamped to the engine's ceiling.
+  void set_depth(int d);
+  // Deepest search the engine supports; the UI uses it to bound its control.
+  static int max_depth();
   void new_game();
   // Analysis/Human: set the board. `moves` are long-algebraic from `fen`.
   bool set_position(const std::string &fen,
@@ -156,7 +160,9 @@ private:
   void analysis_step();
   void human_step();
   // Search the current position, publishing per-iteration telemetry.
-  Search::Result think();
+  // `ponder` runs one long search instead of a short budgeted one: it is the
+  // engine thinking on the opponent's clock and ends when they move.
+  Search::Result think(bool ponder = false);
   void publish_frame(const Core::Position &pos, bool thinking);
   void publish_frame_current();
   void publish();
@@ -181,6 +187,9 @@ private:
   std::atomic<int> moveDelayMs_{300};
   std::atomic<int> nodes_{20000};
   std::atomic<int> threads_{1};
+  std::atomic<int> depth_{0};
+  // Rate-limits telemetry during a long ponder so the UI is not flooded.
+  std::chrono::steady_clock::time_point lastPublish_{};
   int appliedThreads_ = 1;
 
   // Board state, touched only by the worker thread except through commands.

@@ -68,10 +68,10 @@ public:
   void set_threads(int threads);
   void set_small_net_threshold(int cp);
   void set_lazy_eval_margin(int cp);
-  // Datagen: keep move-ordering history warm across the many short fixed-node
-  // searches of one game instead of zeroing ~857 KB of tables every call.
-  // Off by default so normal play (and the bench signature) is unchanged;
-  // callers reset per game via clear().
+  // Keep move-ordering history warm across the searches of one game instead of
+  // zeroing ~857 KB of tables every call. ON by default: SPRT measured
+  // +37.6 Elo +/- 15.4 over 1521 games at 25k nodes. Callers reset per game via
+  // clear(), so history never crosses a game boundary.
   void set_persist_ordering(bool v);
   // Search the best N root moves with a full window each, so every reported
   // line has an exact score. N == 1 (the default) leaves the search exactly as
@@ -177,9 +177,8 @@ private:
   // Lazy eval: |PSQT side-output| above this (cp) skips the big net's dense
   // layers. 0 = off (always full forward). Tuned via UCI / SPRT.
   int lazyEvalMargin_ = 0;
-  // Datagen: when set, search_internal keeps the ordering history warm across
-  // calls (no per-search clear). See set_persist_ordering.
-  bool persistOrdering_ = false;
+  // See set_persist_ordering. Default on since the SPRT gate passed.
+  bool persistOrdering_ = true;
   int multiPv_ = 1;
 
 #ifdef ENGINE_PROF

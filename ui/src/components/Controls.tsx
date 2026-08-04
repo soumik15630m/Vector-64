@@ -46,6 +46,25 @@ interface Props {
   send: (c: ControlCommand) => void;
 }
 
+/**
+ * Node budgets span five orders of magnitude, so the slider is logarithmic and
+ * its top position means "no cap" -- the engine takes uint64 nodes, so there is
+ * no ceiling to impose. Research runs need the extremes; watching needs the
+ * low end.
+ */
+const NODE_STEPS = [
+  1e3, 2e3, 5e3, 1e4, 2e4, 5e4, 1e5, 2e5, 5e5, 1e6, 2e6, 5e6, 1e7, 2e7, 5e7,
+  1e8, 2e8, 5e8, 0,
+];
+const nodeLabel = (n: number) =>
+  n === 0
+    ? "unlimited"
+    : n >= 1e6
+      ? `${n / 1e6}M`
+      : n >= 1e3
+        ? `${n / 1e3}k`
+        : `${n}`;
+
 const MODES: { id: Mode; label: string }[] = [
   { id: "selfplay", label: "self-play" },
   { id: "analysis", label: "analysis" },
@@ -56,7 +75,40 @@ export function Controls({ s, send }: Props) {
   const [fen, setFen] = useState("");
   const [posError, setPosError] = useState<string | null>(null);
   const [delay, setDelay] = useState(300);
-  const [nodes, setNodes] = useState(20000);
+  const [nodeIdx, setNodeIdx] = useState(
+    Math.max(0, NODE_STEPS.indexOf(20000)),
+  );
+  const [depth, setDepth] = useState(0); // 0 = no cap
+  const [nodeVal, setNodeVal] = useState(20000);
+  const [nodeText, setNodeText] = useState("20000");
+  const [depthText, setDepthText] = useState("0");
+
+  // Typed entry: anything the engine accepts is allowed (nodes are uint64 on
+  // the engine side, so there is no ceiling to enforce here); depth is clamped
+  // to the engine's real maximum. Garbage input reverts rather than being sent.
+  const commitNodes = () => {
+    const v = Math.floor(Number(nodeText.replace(/[_,\s]/g, "")));
+    if (!Number.isFinite(v) || v < 0) {
+      setNodeText(String(nodeVal));
+      return;
+    }
+    setNodeVal(v);
+    setNodeText(String(v));
+    const i = NODE_STEPS.indexOf(v);
+    if (i >= 0) setNodeIdx(i);
+    send({ cmd: "nodes", value: v });
+  };
+  const commitDepth = () => {
+    const raw = Math.floor(Number(depthText.replace(/[_,\s]/g, "")));
+    if (!Number.isFinite(raw) || raw < 0) {
+      setDepthText(String(depth));
+      return;
+    }
+    const v = Math.min(raw, s.maxDepth);
+    setDepth(v);
+    setDepthText(String(v));
+    send({ cmd: "depth", value: v });
+  };
   // Never offer more threads than the machine has: past the core count lazy
   // SMP gets slower, not faster. The engine clamps too, so a stale UI value
   // cannot push it out of range.
@@ -143,19 +195,65 @@ export function Controls({ s, send }: Props) {
         </div>
         <div>
           <label className="lbl">
-            nodes<b>{nodes >= 1000 ? `${Math.round(nodes / 1000)}k` : nodes}</b>
+            nodes<b>{nodeLabel(nodeVal)}</b>
           </label>
           <input
             type="range"
-            min={1000}
-            max={400000}
-            step={1000}
-            value={nodes}
+            min={0}
+            max={NODE_STEPS.length - 1}
+            step={1}
+            value={nodeIdx}
             onChange={(e) => {
-              const v = Number(e.currentTarget.value);
-              setNodes(v);
-              send({ cmd: "nodes", value: v });
+              const i = Number(e.currentTarget.value);
+              setNodeIdx(i);
+              setNodeVal(NODE_STEPS[i]);
+              setNodeText(String(NODE_STEPS[i]));
+              send({ cmd: "nodes", value: NODE_STEPS[i] });
             }}
+          />
+          <input
+            className="numbox"
+            type="text"
+            inputMode="numeric"
+            value={nodeText}
+            title="exact node budget; 0 = unlimited"
+            onChange={(e) => setNodeText(e.currentTarget.value)}
+            onBlur={() => commitNodes()}
+            onKeyDown={(e) => e.key === "Enter" && commitNodes()}
+          />
+        </div>
+      </div>
+
+      <div style={{ marginTop: 8 }}>
+        <label className="lbl">
+          depth<b>{depth === 0 ? `auto · max ${s.maxDepth}` : depth}</b>
+        </label>
+        <div className="with-box">
+          <input
+            type="range"
+            min={0}
+            max={s.maxDepth}
+            step={1}
+            value={Math.min(depth, s.maxDepth)}
+            onChange={(e) => {
+              const v = Math.min(
+                Math.max(0, Number(e.currentTarget.value) || 0),
+                s.maxDepth,
+              );
+              setDepth(v);
+              setDepthText(String(v));
+              send({ cmd: "depth", value: v });
+            }}
+          />
+          <input
+            className="numbox"
+            type="text"
+            inputMode="numeric"
+            value={depthText}
+            title={`exact depth; 0 = no cap, engine maximum ${s.maxDepth}`}
+            onChange={(e) => setDepthText(e.currentTarget.value)}
+            onBlur={() => commitDepth()}
+            onKeyDown={(e) => e.key === "Enter" && commitDepth()}
           />
         </div>
       </div>
