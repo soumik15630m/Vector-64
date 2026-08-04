@@ -1,5 +1,7 @@
 #include "datagen/datagen.h"
 
+#include "datagen/selfplay.h"
+
 #include "cores/attacks.h"
 #include "cores/bitboard.h"
 #include "cores/movegen.h"
@@ -27,8 +29,6 @@
 namespace Datagen {
 namespace {
 
-constexpr const char *START_FEN =
-    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 constexpr int MATE_CP = 8000;
 
 struct Params {
@@ -66,31 +66,8 @@ int blend_cp(int evalWhite, double wdl, double lam) {
   return int(std::lround(400.0 * std::log(p / (1.0 - p))));
 }
 
-bool insufficient_material(const Core::Position &pos) {
-  if (pos.pieces(Core::PAWN) || pos.pieces(Core::ROOK) ||
-      pos.pieces(Core::QUEEN))
-    return false;
-  return Core::popcount(pos.pieces(Core::KNIGHT) | pos.pieces(Core::BISHOP)) <=
-         1;
-}
-
-// Seeded quiet, material-balanced random opening. false => caller retries.
-bool make_opening(Core::Position &pos, std::mt19937_64 &rng, const Params &p) {
-  pos.setFromFEN(START_FEN);
-  for (int i = 0; i < p.openingPlies; ++i) {
-    Core::MoveList legal;
-    Core::generate_legal_moves(pos, legal);
-    if (legal.size() == 0)
-      return false;
-    Core::UndoInfo ui;
-    pos.make_move(legal[int(rng() % uint64_t(legal.size()))], ui);
-  }
-  Core::MoveList legal;
-  Core::generate_legal_moves(pos, legal);
-  if (legal.size() == 0 || pos.in_check())
-    return false;
-  return std::abs(pos.material_wb()) <= p.balance;
-}
+// START_FEN, insufficient_material and make_opening now live in selfplay.h,
+// shared with the visualizer's self-play mode.
 
 struct Shared {
   std::ofstream out;
@@ -129,7 +106,7 @@ void worker(const Params &p, Shared &sh) {
     std::mt19937_64 rng(p.seed + 0x9e3779b97f4a7c15ULL * uint64_t(gi + 1));
     Core::Position pos;
     int tries = 0;
-    while (!make_opening(pos, rng, p) && ++tries < 64) {
+    while (!make_opening(pos, rng, p.openingPlies, p.balance) && ++tries < 64) {
     }
     if (tries >= 64)
       continue;

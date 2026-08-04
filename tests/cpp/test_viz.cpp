@@ -5,11 +5,15 @@
 // path, and the reported per-layer attributions must reproduce the exact layer
 // outputs when summed back up.
 #include "cores/attacks.h"
+#include "cores/movegen.h"
 #include "cores/position.h"
 #include "cores/zobrist.h"
 #include "nnue/halfka.h"
+#include "uci/uci_util.h"
 #include "viz/probe.h"
+#include "viz/session.h"
 
+#include <chrono>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -107,11 +111,112 @@ bool same_frame(const Viz::VizFrame &a, const Viz::VizFrame &b) {
          a.outContrib == b.outContrib && a.l2Contrib == b.l2Contrib;
 }
 
+// Drive a live self-play session and check the driver keeps the board and the
+// reported move list in agreement: replaying `moves` from `startFen` must
+// reproduce `fen` exactly, and every move must have been legal when played.
+bool session_test() {
+  Viz::Config cfg;
+  cfg.nodes = 500;
+  cfg.moveDelayMs = 0;
+  cfg.hashMb = 8;
+  cfg.threads = 1;
+  cfg.maxPlies = 40; // keep games short so several finish quickly
+  cfg.openingPlies = 6;
+  cfg.seed = 7;
+
+  Viz::Session session(cfg);
+  session.start();
+
+  const auto t0 = std::chrono::steady_clock::now();
+  uint64_t seq = 0;
+  int checked = 0;
+  int lastGame = 0;
+  int gamesSeen = 0;
+  bool ok = true;
+
+  while (std::chrono::steady_clock::now() - t0 < std::chrono::seconds(10)) {
+    const Viz::Snapshot s = session.wait_for(seq, 200);
+    if (s.seq == seq)
+      continue;
+    seq = s.seq;
+    if (s.game.startFen.empty())
+      continue;
+
+    if (s.game.gameIndex != lastGame) {
+      if (lastGame != 0)
+        ++gamesSeen;
+      lastGame = s.game.gameIndex;
+    }
+
+    Core::Position p;
+    if (!p.setFromFEN(s.game.startFen)) {
+      std::printf("FAIL: session startFen does not parse: %s\n",
+                  s.game.startFen.c_str());
+      ok = false;
+      break;
+    }
+    bool replayed = true;
+    for (const std::string &mv : s.game.moves) {
+      Core::MoveList legal;
+      Core::generate_legal_moves(p, legal);
+      Core::Move found = Core::Move::none();
+      for (int i = 0; i < legal.size(); ++i)
+        if (UCI::move_to_uci(legal[i]) == mv)
+          found = legal[i];
+      if (!found.is_ok()) {
+        std::printf("FAIL: session reported an illegal move '%s' from %s\n",
+                    mv.c_str(), s.game.startFen.c_str());
+        replayed = false;
+        break;
+      }
+      Core::UndoInfo ui;
+      p.make_move(found, ui);
+    }
+    if (!replayed) {
+      ok = false;
+      break;
+    }
+    if (p.toFEN() != s.game.fen) {
+      std::printf("FAIL: replaying moves does not reproduce the session board\n"
+                  "  replayed: %s\n  reported: %s\n",
+                  p.toFEN().c_str(), s.game.fen.c_str());
+      ok = false;
+      break;
+    }
+    ++checked;
+    if (gamesSeen >= 2 && checked > 40)
+      break;
+  }
+
+  session.stop();
+
+  if (!ok)
+    return false;
+  if (checked == 0) {
+    std::printf("FAIL: session produced no snapshots\n");
+    return false;
+  }
+  if (gamesSeen == 0) {
+    std::printf("FAIL: no self-play game reached a terminal state\n");
+    return false;
+  }
+  std::printf("PASS: session drives legal self-play (%d snapshots verified, "
+              "%d games completed, board == replayed move list)\n",
+              checked, gamesSeen);
+  return true;
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
   Core::Attacks::init();
   Core::Zobrist::init();
+
+  // Selector so ctest can register each check separately:
+  //   test_viz [all|frame|session]
+  const std::string which = argc > 1 ? argv[1] : "all";
+  if (which == "session")
+    return session_test() ? 0 : 1;
 
   // Deterministic synthetic weights: exercises the full pipeline without
   // depending on a 46 MB net file being present.
@@ -155,5 +260,8 @@ int main() {
   std::printf("PASS: viz telemetry exact (eval == engine eval, attribution "
               "reconstructs every layer), deterministic, %d positions\n",
               int(sizeof(FENS) / sizeof(FENS[0])));
+
+  if (which == "all")
+    return session_test() ? 0 : 1;
   return 0;
 }

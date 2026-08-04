@@ -166,6 +166,8 @@ endif()
 add_library(chess_viz STATIC
         src/viz/probe.cpp
         src/viz/probe.h
+        src/viz/session.cpp
+        src/viz/session.h
 )
 target_link_libraries(chess_viz PUBLIC chess_core)
 
@@ -240,7 +242,10 @@ add_test(NAME "consistency.make_unmake_and_movegen" COMMAND test_zobrist games)
 # Visualizer telemetry reports the engine's real arithmetic: the captured eval
 # equals the ordinary eval path, and each layer's attribution sums back to that
 # layer's output.
-add_test(NAME "viz.telemetry_exact" COMMAND test_viz)
+add_test(NAME "viz.telemetry_exact" COMMAND test_viz frame)
+# The session driver keeps the board and the reported move list in agreement,
+# and self-play games actually reach terminal states.
+add_test(NAME "viz.session_selfplay" COMMAND test_viz session)
 
 # Search regression fingerprint.
 find_program(BASH_EXECUTABLE bash)
