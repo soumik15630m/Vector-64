@@ -72,6 +72,11 @@ public:
 
   size_t hash_mb() const { return hashMb_; }
 
+  // Read-only access to the loaded nets, for the visualizer's telemetry layer
+  // (src/viz) to probe the network out of band. Never used by the search
+  // itself -- probing from the hot path would change node counts.
+  const Evaluator &evaluator() const { return *eval_; }
+
   Result search(Core::Position root, const Limits &limits,
                 const Callbacks &callbacks);
 

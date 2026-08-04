@@ -158,9 +158,26 @@ else()
         message(STATUS "NNUE binary: skipped (net '${EMBED_NNUE}' missing or unsupported toolchain)")
 endif()
 
+# ---------------------------------------------------------------------------
+# Visualizer support library. Kept out of chess_core on purpose: the tournament
+# binaries must gain nothing from it (no extra code, no future third-party
+# link deps). Only the visualizer binary and its tests link this.
+# ---------------------------------------------------------------------------
+add_library(chess_viz STATIC
+        src/viz/probe.cpp
+        src/viz/probe.h
+)
+target_link_libraries(chess_viz PUBLIC chess_core)
+
 add_executable(test_zobrist tests/cpp/test_zobrist.cpp)
 target_link_libraries(test_zobrist chess_core)
 set_target_properties(test_zobrist PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+add_executable(test_viz tests/cpp/test_viz.cpp)
+target_link_libraries(test_viz chess_viz)
+set_target_properties(test_viz PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
@@ -219,6 +236,11 @@ add_perft_test(position6_d4 "${FEN_POS6}" 4 3894594)
 # State / evaluation invariants.
 add_test(NAME "consistency.nnue_simd_bitexact" COMMAND test_zobrist nnue)
 add_test(NAME "consistency.make_unmake_and_movegen" COMMAND test_zobrist games)
+
+# Visualizer telemetry reports the engine's real arithmetic: the captured eval
+# equals the ordinary eval path, and each layer's attribution sums back to that
+# layer's output.
+add_test(NAME "viz.telemetry_exact" COMMAND test_viz)
 
 # Search regression fingerprint.
 find_program(BASH_EXECUTABLE bash)

@@ -1035,6 +1035,14 @@ public:
   // incremental delta against a rebuild. Defined in network.cpp.
   static bool self_test();
 
+  // Read-only weight views for the visualizer (src/viz): layer attribution
+  // (weight x activation) and the net inspector. Const only -- a loaded net is
+  // immutable, and nothing here is reachable from the search hot path.
+  const int16_t *ft_column(int feature) const { return ft_col(feature); }
+  const int32_t *ft_psqt_column(int feature) const { return ft_psqt(feature); }
+  const std::array<int16_t, H> &ft_bias() const { return ftBias_; }
+  const Bucket &bucket_weights(int b) const { return buckets_[b]; }
+
 private:
   const int16_t *ft_col(int feature) const {
     return ftWeights_.data() + static_cast<size_t>(feature) * H;

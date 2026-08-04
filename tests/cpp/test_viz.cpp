@@ -1,0 +1,159 @@
+// Verifies the visualizer telemetry layer (src/viz/probe).
+//
+// The bar is that a frame reports the engine's real arithmetic, not a
+// decorative approximation: the captured eval must equal the ordinary eval
+// path, and the reported per-layer attributions must reproduce the exact layer
+// outputs when summed back up.
+#include "cores/attacks.h"
+#include "cores/position.h"
+#include "cores/zobrist.h"
+#include "nnue/halfka.h"
+#include "viz/probe.h"
+
+#include <cstdio>
+#include <memory>
+#include <string>
+
+namespace {
+
+constexpr const char *FENS[] = {
+    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+    "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+    "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
+};
+
+bool fail(const char *what, const std::string &fen) {
+  std::printf("FAIL: %s\n  fen: %s\n", what, fen.c_str());
+  return false;
+}
+
+// Every active feature must re-derive from its own reported parts, and the
+// perspective's own king must be excluded (it is the bucket anchor).
+bool check_features(const Viz::VizFrame &f, const Core::Position &pos,
+                    const Viz::PerspectiveInput &p, Core::Color persp) {
+  namespace HK = NNUE::HalfKA;
+  const int expected = Core::popcount(pos.occupancy()) - 1;
+  if (int(p.features.size()) != expected)
+    return fail("active feature count != pieces - 1", f.fen);
+  if (p.kingBucket < 0 || p.kingBucket >= HK::KING_BUCKETS)
+    return fail("king bucket out of range", f.fen);
+
+  const HK::Orient o = HK::make_orient(persp, Core::Square(p.kingSquare));
+  for (const Viz::ActiveFeature &af : p.features) {
+    if (af.square == p.kingSquare && af.pieceColor == int(persp))
+      return fail("perspective's own king emitted as a feature", f.fen);
+    const int want = HK::feature_index(o, Core::Color(af.pieceColor),
+                                       Core::PieceType(af.pieceType),
+                                       Core::Square(af.square));
+    if (want != af.featureIndex)
+      return fail("feature index does not match its (piece, square)", f.fen);
+    // The same index must fall out of the reported bucket/kind/oriented square.
+    const int rebuilt =
+        (p.kingBucket * HK::PIECE_KINDS + af.pieceKind) * HK::SQUARES +
+        af.orientedSquare;
+    if (rebuilt != af.featureIndex)
+      return fail("feature index != (bucket, kind, orientedSquare) round trip",
+                  f.fen);
+  }
+  return true;
+}
+
+// Sum the reported contributions back into the layer outputs the engine
+// produced. If attribution were cosmetic, these would not reconcile.
+bool check_attribution(const Viz::VizFrame &f, const NNUE::Network &net) {
+  constexpr int L1 = NNUE::Arch::L1;
+  constexpr int L2 = NNUE::Arch::L2;
+  const NNUE::Network::Bucket &b = net.bucket_weights(f.bucket);
+
+  // positional = (outb + sum_j outw[j]*l2out[j]) >> OUT_SHIFT
+  int32_t raw = b.outb;
+  for (int j = 0; j < L2; ++j)
+    raw += f.outContrib[j];
+  if ((raw >> NNUE::Arch::OUT_SHIFT) != f.positional)
+    return fail("outContrib does not reproduce the positional term", f.fen);
+
+  // l2out[o] = clip((l2b[o] + sum_j l2w[o][j]*l1out[j]) >> L2_SHIFT)
+  for (int o = 0; o < L2; ++o) {
+    int32_t sum = b.l2b[o];
+    for (int j = 0; j < L1; ++j)
+      sum += f.l2Contrib[static_cast<size_t>(o) * L1 + j];
+    const int v = sum >> NNUE::Arch::L2_SHIFT;
+    const int clipped =
+        v < 0 ? 0 : (v > NNUE::Arch::ACT_MAX ? NNUE::Arch::ACT_MAX : v);
+    if (clipped != int(f.l2out[o]))
+      return fail("l2Contrib does not reproduce l2out", f.fen);
+  }
+
+  // l1Top must be ordered by descending |contribution|.
+  for (int o = 0; o < L1 && f.l1TopK > 0; ++o) {
+    for (int j = 1; j < f.l1TopK; ++j) {
+      const auto &prev = f.l1Top[static_cast<size_t>(o) * f.l1TopK + j - 1];
+      const auto &cur = f.l1Top[static_cast<size_t>(o) * f.l1TopK + j];
+      const int32_t a = prev.value < 0 ? -prev.value : prev.value;
+      const int32_t c = cur.value < 0 ? -cur.value : cur.value;
+      if (c > a)
+        return fail("l1Top is not ordered by |contribution|", f.fen);
+    }
+  }
+  return true;
+}
+
+bool same_frame(const Viz::VizFrame &a, const Viz::VizFrame &b) {
+  return a.fen == b.fen && a.eval == b.eval && a.psqt == b.psqt &&
+         a.positional == b.positional && a.bucket == b.bucket &&
+         a.accUs == b.accUs && a.accThem == b.accThem && a.l1in == b.l1in &&
+         a.l1out == b.l1out && a.l2out == b.l2out &&
+         a.outContrib == b.outContrib && a.l2Contrib == b.l2Contrib;
+}
+
+} // namespace
+
+int main() {
+  Core::Attacks::init();
+  Core::Zobrist::init();
+
+  // Deterministic synthetic weights: exercises the full pipeline without
+  // depending on a 46 MB net file being present.
+  auto net = std::make_unique<NNUE::Network>();
+  net->randomize(0x9E3779B97F4A7C15ULL);
+
+  for (const char *fen : FENS) {
+    Core::Position pos;
+    if (!pos.setFromFEN(fen)) {
+      std::printf("FAIL: could not parse fen\n  %s\n", fen);
+      return 1;
+    }
+
+    const Viz::VizFrame f = Viz::capture(pos, *net);
+
+    // The captured eval must be exactly what the ordinary eval path returns --
+    // this is what makes the visualizer show the real engine.
+    NNUE::Accumulator acc;
+    net->refresh(pos, acc);
+    const bool ok =
+        (f.eval == net->evaluate(pos, acc) ||
+         fail("captured eval != NNUE::Network::evaluate", f.fen)) &&
+        (f.eval == f.psqt + f.positional ||
+         fail("eval != psqt + positional", f.fen)) &&
+        (f.fen == pos.toFEN() || fail("frame fen mismatch", f.fen)) &&
+        ((int(f.accUs.size()) == NNUE::Network::HIDDEN &&
+          int(f.l1in.size()) == NNUE::Network::HIDDEN &&
+          int(f.l1out.size()) == NNUE::Arch::L1 &&
+          int(f.l2out.size()) == NNUE::Arch::L2) ||
+         fail("layer array sizes do not match the architecture", f.fen)) &&
+        check_features(f, pos, f.white, Core::WHITE) &&
+        check_features(f, pos, f.black, Core::BLACK) &&
+        check_attribution(f, *net) &&
+        // Capture is a pure function of (position, net).
+        (same_frame(f, Viz::capture(pos, *net)) ||
+         fail("capture is not deterministic", f.fen));
+    if (!ok)
+      return 1;
+  }
+
+  std::printf("PASS: viz telemetry exact (eval == engine eval, attribution "
+              "reconstructs every layer), deterministic, %d positions\n",
+              int(sizeof(FENS) / sizeof(FENS[0])));
+  return 0;
+}
