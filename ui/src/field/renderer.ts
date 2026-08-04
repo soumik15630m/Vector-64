@@ -479,7 +479,7 @@ export class FieldRenderer {
     if (!this.arch || !this.pairW || !this.pairB) return;
     const arch = this.arch;
     const hov = this.hover;
-    const dim = hov ? 0.13 : 1;
+    const dim = hov ? 0.2 : 1;
 
     const whiteIsUs = f.sideToMove === 0;
     const pairPos = (i: number) => {

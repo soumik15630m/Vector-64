@@ -26,51 +26,116 @@ const LAYERS = [
 const FILES = "abcdefgh";
 const PIECE = ["", "pawn", "knight", "bishop", "rook", "queen", "king"];
 
-/** What the hovered node is and what it contributed. All values are exact. */
+const signed = (x: number) => `${x > 0 ? "+" : ""}${x}`;
+
+/**
+ * The big nodes (L1, L2, output) get a card rather than a cursor tooltip: they
+ * are the part of the network a person can actually reason about, and each one
+ * is explained in terms of the decision it is feeding.
+ *
+ * Only exact quantities are reported. An L1 neuron's effect on the final
+ * evaluation is NOT linear -- the L2 clip and the shifts sit in between -- so
+ * its drive into L2 is reported as what it is rather than converted into a
+ * centipawn figure that would look precise and not be.
+ */
+function describeCard(
+  h: HoverTarget,
+  f: Frame,
+  arch: Arch,
+  pv: string[],
+  depth: number,
+  thinking: boolean,
+): {
+  head: string;
+  big: string;
+  sub: string;
+  rows: [string, string][];
+  line?: string;
+  tone?: "pos" | "neg";
+} | null {
+  switch (h.layer) {
+    case "out": {
+      const tone = f.eval > 0 ? "pos" : f.eval < 0 ? "neg" : undefined;
+      return {
+        head: thinking ? "currently choosing" : "engine plays",
+        big: pv[0] ?? "—",
+        sub: `${signed(f.eval)} cp · depth ${depth}`,
+        rows: [
+          ["psqt", signed(f.psqt)],
+          ["positional", signed(f.positional)],
+          ["bucket", `${f.bucket} / ${arch.psqtBuckets}`],
+        ],
+        line: pv.length > 1 ? pv.join(" ") : undefined,
+        tone,
+      };
+    }
+    case "l1": {
+      const act = f.l1out[h.index] ?? 0;
+      let drive = 0;
+      let bestO = -1;
+      let bestV = 0;
+      for (let o = 0; o < arch.l2; o++) {
+        const v = f.l2Contrib[o * arch.l1 + h.index];
+        drive += v;
+        if (Math.abs(v) > Math.abs(bestV)) {
+          bestV = v;
+          bestO = o;
+        }
+      }
+      const k = f.l1TopK;
+      let topIn = 0;
+      for (let j = 0; j < k; j++) {
+        const v = f.l1Top[(h.index * k + j) * 2 + 1];
+        if (Math.abs(v) > Math.abs(topIn)) topIn = v;
+      }
+      return {
+        head: `L1 neuron ${h.index}`,
+        big: `${act}`,
+        sub: `activation · max ${arch.actMax}`,
+        rows: [
+          ["strongest input", signed(topIn)],
+          ["drive into L2", signed(drive)],
+          [
+            "feeds most",
+            bestO >= 0 ? `L2 ${bestO} (${signed(bestV)})` : "—",
+          ],
+        ],
+        tone: drive > 0 ? "pos" : drive < 0 ? "neg" : undefined,
+      };
+    }
+    case "l2": {
+      const act = f.l2out[h.index] ?? 0;
+      const c = f.outContrib[h.index] ?? 0;
+      let total = 0;
+      for (let i = 0; i < f.outContrib.length; i++)
+        total += Math.abs(f.outContrib[i]);
+      return {
+        head: `L2 neuron ${h.index}`,
+        big: signed(c),
+        sub: "contribution to the evaluation",
+        rows: [
+          ["activation", `${act} / ${arch.actMax}`],
+          ["share of output", `${((Math.abs(c) / Math.max(1, total)) * 100).toFixed(1)}%`],
+          ["effect", c > 0 ? "raises eval" : c < 0 ? "lowers eval" : "neutral"],
+        ],
+        tone: c > 0 ? "pos" : c < 0 ? "neg" : undefined,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+/** Small cells keep a cursor tooltip: there are thousands and they are tiny. */
 function describe(
   h: HoverTarget,
   f: Frame,
   arch: Arch,
-): { title: string; rows: [string, string][] } {
+): { title: string; rows: [string, string][] } | null {
   const whiteIsUs = f.sideToMove === 0;
   const rows: [string, string][] = [];
 
   switch (h.layer) {
-    case "l1": {
-      const v = f.l1out[h.index] ?? 0;
-      rows.push(["activation", `${v} / ${arch.actMax}`]);
-      // Its own strongest inputs, and what it pushed into L2.
-      const k = f.l1TopK;
-      if (k > 0) {
-        let top = 0;
-        for (let j = 0; j < k; j++) {
-          const val = f.l1Top[(h.index * k + j) * 2 + 1];
-          if (Math.abs(val) > Math.abs(top)) top = val;
-        }
-        rows.push(["strongest input", `${top > 0 ? "+" : ""}${top}`]);
-      }
-      let sum = 0;
-      for (let o = 0; o < arch.l2; o++) sum += f.l2Contrib[o * arch.l1 + h.index];
-      rows.push(["total drive into L2", `${sum > 0 ? "+" : ""}${sum}`]);
-      return { title: `L1 neuron ${h.index}`, rows };
-    }
-    case "l2": {
-      const v = f.l2out[h.index] ?? 0;
-      const c = f.outContrib[h.index] ?? 0;
-      rows.push(["activation", `${v} / ${arch.actMax}`]);
-      rows.push(["contribution to eval", `${c > 0 ? "+" : ""}${c}`]);
-      rows.push([
-        "share of output",
-        `${((Math.abs(c) / Math.max(1, f.outContrib.reduce((a, b) => a + Math.abs(b), 0))) * 100).toFixed(1)}%`,
-      ]);
-      return { title: `L2 neuron ${h.index}`, rows };
-    }
-    case "out":
-      rows.push(["eval (side to move)", `${f.eval > 0 ? "+" : ""}${f.eval} cp`]);
-      rows.push(["psqt", `${f.psqt}`]);
-      rows.push(["positional", `${f.positional}`]);
-      rows.push(["bucket", `${f.bucket} / ${arch.psqtBuckets}`]);
-      return { title: "output", rows };
     case "accW":
     case "accB": {
       const white = h.layer === "accW";
@@ -107,6 +172,8 @@ function describe(
       rows.push(["oriented square", `${feat.orientedSquare}`]);
       return { title: name, rows };
     }
+    default:
+      return null; // L1 / L2 / output are shown as a card instead
   }
 }
 
@@ -162,7 +229,12 @@ export function NeuronField({
     if (frame) r.update(frame);
   }, [frame, arch]);
 
-  const info = hover && frame && arch ? describe(hover, frame, arch) : null;
+  // Big nodes get the card; small cells get the cursor tooltip. Never both.
+  const card =
+    hover && frame && arch
+      ? describeCard(hover, frame, arch, pv, depth, thinking)
+      : null;
+  const info = hover && frame && arch && !card ? describe(hover, frame, arch) : null;
 
   return (
     <div ref={hostRef} className="field-host">
@@ -206,17 +278,23 @@ export function NeuronField({
         </div>
       )}
 
-      {/* What the engine is choosing, parked at the end of the forward pass. */}
-      {pv.length > 0 && (
+      {/* Shown only while a big node is hovered, so the field stays clean. */}
+      {card && (
         <div className="decision">
-          <h5>{thinking ? "currently choosing" : "engine plays"}</h5>
-          <div className="mv">{pv[0]}</div>
-          <div className="sub">
-            {frame
-              ? `${frame.eval > 0 ? "+" : ""}${(frame.eval / 100).toFixed(2)} · depth ${depth}`
-              : `depth ${depth}`}
+          <h5>{card.head}</h5>
+          <div className={`mv${card.tone ? " " + card.tone : ""}`}>
+            {card.big}
           </div>
-          {pv.length > 1 && <div className="line">{pv.join(" ")}</div>}
+          <div className="sub">{card.sub}</div>
+          <div className="crows">
+            {card.rows.map(([k, v]) => (
+              <div key={k}>
+                <span>{k}</span>
+                <b className="num">{v}</b>
+              </div>
+            ))}
+          </div>
+          {card.line && <div className="line">{card.line}</div>}
         </div>
       )}
 
