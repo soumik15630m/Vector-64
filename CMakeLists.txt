@@ -277,7 +277,9 @@ if(ENGINE_VIZ)
             target_compile_definitions(ChessEngine-viz PRIVATE ${_viz_defs})
         endif()
         if(WIN32)
-            target_link_libraries(ChessEngine-viz ws2_32)
+            # ws2_32: sockets. shell32: ShellExecute, used to open the browser
+            # without spawning a command processor.
+            target_link_libraries(ChessEngine-viz ws2_32 shell32)
         endif()
         find_package(Threads REQUIRED)
         target_link_libraries(ChessEngine-viz Threads::Threads)

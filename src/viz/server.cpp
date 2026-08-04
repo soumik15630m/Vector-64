@@ -7,8 +7,16 @@
 #include <httplib.h>
 
 #include <cstdio>
-#include <cstdlib>
 #include <string>
+
+#if defined(_WIN32)
+#include <shellapi.h>
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif
 
 namespace Viz {
 namespace {
@@ -26,16 +34,37 @@ constexpr const char *PLACEHOLDER_HTML =
     "<p>The engine stream is live: <code>GET /api/state?since=0</code></p>"
     "</div></body></html>";
 
+// Open the default browser without going through a command processor. The URL
+// is composed from our own host and port so there is nothing to inject, but
+// handing a string to a shell is avoidable here, so we avoid it: ShellExecute
+// on Windows, fork + exec elsewhere.
 void try_open_browser(const std::string &url) {
+  bool ok = false;
 #if defined(_WIN32)
-  const std::string cmd = "start \"\" \"" + url + "\"";
-#elif defined(__APPLE__)
-  const std::string cmd = "open \"" + url + "\"";
+  ok = reinterpret_cast<INT_PTR>(ShellExecuteA(
+           nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32;
 #else
-  const std::string cmd = "xdg-open \"" + url + "\" >/dev/null 2>&1 &";
+#if defined(__APPLE__)
+  const char *opener = "open";
+#else
+  const char *opener = "xdg-open";
 #endif
-  // Best effort only: the URL is composed from our own host/port, never input.
-  if (std::system(cmd.c_str()) != 0)
+  const pid_t pid = fork();
+  if (pid == 0) {
+    // Child: detach from our stdio so the browser cannot scribble on the
+    // console, then replace ourselves with the opener.
+    const int devnull = ::open("/dev/null", O_WRONLY);
+    if (devnull >= 0) {
+      dup2(devnull, STDOUT_FILENO);
+      dup2(devnull, STDERR_FILENO);
+      close(devnull);
+    }
+    execlp(opener, opener, url.c_str(), static_cast<char *>(nullptr));
+    _exit(127); // exec failed
+  }
+  ok = pid > 0;
+#endif
+  if (!ok)
     std::fprintf(stderr, "viz: could not open a browser; visit %s\n",
                  url.c_str());
 }
