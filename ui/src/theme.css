@@ -142,7 +142,7 @@ body {
 }
 .col-right {
   grid-area: right;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 .col-right.stack {
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -1046,4 +1046,108 @@ input.numbox:focus {
   color: var(--pos);
   font-family: var(--mono);
   font-weight: 500;
+}
+
+/* --- evaluation graph --------------------------------------------------- */
+.evalgraph {
+  width: 100%;
+  height: 74px;
+  display: block;
+}
+.evalgraph .zero {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.evalgraph .line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.evalgraph .fill {
+  fill: var(--accent-glow);
+  stroke: none;
+}
+.evalgraph .cursor {
+  stroke: var(--fg-faint);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+.evalgraph .dot {
+  fill: var(--accent);
+}
+
+/* --- search shape ------------------------------------------------------- */
+.tree {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 58px;
+}
+.tree .col {
+  flex: 1;
+  height: 100%;
+  position: relative;
+}
+.tree .col i {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-radius: 1px 1px 0 0;
+}
+.tree .col .sel {
+  background: var(--accent-deep);
+}
+.tree .col .nom {
+  background: var(--accent);
+}
+.axis b.sw {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  vertical-align: -1px;
+  margin-right: 3px;
+}
+.axis b.sw.nom {
+  background: var(--accent);
+}
+.axis b.sw.sel {
+  background: var(--accent-deep);
+  margin-left: 8px;
+}
+
+/* --- ablation ----------------------------------------------------------- */
+.ablate-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+}
+button.ab {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 0 2px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.1;
+  transition: all 0.15s var(--ease);
+}
+button.ab.wp {
+  color: var(--fg);
+}
+button.ab.bp {
+  color: var(--fg-faint);
+}
+button.ab:hover {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+button.ab em {
+  display: block;
+  font-style: normal;
+  font-size: 8px;
+  opacity: 0.6;
 }

@@ -8,6 +8,8 @@ import { Controls } from "./components/Controls";
 import { NeuronField } from "./components/NeuronField";
 import { NetInspector } from "./components/NetInspector";
 import { DatagenPanel } from "./components/Datagen";
+import { Ablation, EvalGraph, SearchTree } from "./components/Analysis";
+import { useGameHistory } from "./engine/history";
 import {
   CandidatesPanel,
   ClockPanel,
@@ -24,12 +26,13 @@ export default function App() {
   const [boot, setBoot] = useState<BootProgress | null>(null);
   const [state, setState] = useState<EngineState | null>(null);
   const [conn, setConn] = useState<ConnectionState>("connecting");
-  const [showNet, setShowNet] = useState(false);
   // Hovering a candidate previews it on the board.
   const [hoverMove, setHoverMove] = useState<string | null>(null);
   // Click the board to enlarge it; click the speed chip for the full counters.
   const [boardBig, setBoardBig] = useState(false);
   const [showPerf, setShowPerf] = useState(false);
+  // Right column: live telemetry, the net itself, or the analysis tools.
+  const [rightTab, setRightTab] = useState<"live" | "net" | "tools">("live");
   // Column widths are user-adjustable; the centre takes whatever is left.
   const [cols, setCols] = useState({ left: 332, right: 300 });
   const drag = useRef<{ side: "left" | "right"; x0: number; w0: number } | null>(
@@ -98,8 +101,22 @@ export default function App() {
     };
   }, [source]);
 
+  const { plies, iters } = useGameHistory(state);
+
   const send = (c: ControlCommand) => {
     if (source) void source.send(c);
+  };
+
+  // Seek: replay the game up to that ply in analysis mode, so the board AND the
+  // network show the position as it was, not just the board.
+  const seekTo = (ply: number) => {
+    if (!state) return;
+    send({ cmd: "mode", value: "analysis" });
+    send({
+      cmd: "position",
+      fen: state.game.startFen,
+      moves: state.game.moves.slice(0, ply),
+    });
   };
 
   // Ask the engine whether an output file has a recoverable run behind it, so
@@ -157,8 +174,10 @@ export default function App() {
           </>
         )}
         <button
-          className={`btn${showNet ? " on" : ""}`}
-          onClick={() => setShowNet((v) => !v)}
+          className={`btn${rightTab === "net" ? " on" : ""}`}
+          onClick={() =>
+            setRightTab((t) => (t === "net" ? "live" : "net"))
+          }
         >
           net inspector
         </button>
@@ -213,16 +232,33 @@ export default function App() {
       </div>
 
       <div className="col col-right">
+        <div className="seg" style={{ marginBottom: 0 }}>
+          {(["live", "net", "tools"] as const).map((t) => (
+            <button
+              key={t}
+              className={rightTab === t ? "on" : ""}
+              onClick={() => setRightTab(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
         <div className="col-scroll">
-          {showNet && source ? (
+          {rightTab === "net" && source && (
             <NetInspector source={source} state={state} />
-          ) : (
-            state && (
-              <>
-                <SearchPanel s={state} />
-                <NetworkPanel s={state} />
-              </>
-            )
+          )}
+          {rightTab === "live" && state && (
+            <>
+              <SearchPanel s={state} />
+              <NetworkPanel s={state} />
+            </>
+          )}
+          {rightTab === "tools" && state && (
+            <>
+              <EvalGraph plies={plies} onSeek={(p) => seekTo(p.ply)} />
+              <SearchTree iters={iters} />
+              <Ablation s={state} send={send} />
+            </>
           )}
         </div>
       </div>

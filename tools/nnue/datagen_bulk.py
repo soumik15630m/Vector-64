@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
-"""Bulk self-play datagen: build a large dataset over many crash-safe chunks.
+"""DEPRECATED -- superseded by the engine's native data generator.
+
+Use one of these instead; both write byte-identical rows because they share the
+helpers in src/datagen/selfplay.h:
+
+    ChessEngine datagen --net <net> --out <file> --games N --nodes N --threads N
+    ChessEngine-viz             # datagen mode: live games, crash-safe resume
+
+Driving the engine over UCI from Python is slower, and this path has drifted
+from the native one (it predates the native generator, the warm-history default
+and the current label handling). Kept so older commands in notes still run; not
+maintained, and not for new datasets.
+
+Original documentation follows.
+
+Bulk self-play datagen: build a large dataset over many crash-safe chunks.
 
 Runs tools/nnue/datagen.py repeatedly (a fresh seed each chunk) into a shard
 directory until --target-positions is reached. Resumable: every completed shard

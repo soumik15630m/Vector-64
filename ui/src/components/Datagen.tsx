@@ -24,6 +24,13 @@ export function DatagenPanel({
   const [target, setTarget] = useState("1000000");
   const [nodes, setNodes] = useState("6000");
   const [emit, setEmit] = useState<"raw" | "blend">("raw");
+  const [lam, setLam] = useState("0.5");
+  const [skipPlies, setSkipPlies] = useState("12");
+  const [maxPlies, setMaxPlies] = useState("200");
+  const [openingPlies, setOpeningPlies] = useState("8");
+  const [balance, setBalance] = useState("150");
+  const [seed, setSeed] = useState("12345");
+  const [more, setMore] = useState(false);
   const [found, setFound] = useState<{ positions: number; games: number } | null>(
     null,
   );
@@ -47,14 +54,25 @@ export function DatagenPanel({
     };
   }, [out, d.running, probe]);
 
+  const num = (v: string, def: number, min = 0) => {
+    const x = Number(v.replace(/[_,\s]/g, ""));
+    return Number.isFinite(x) && x >= min ? x : def;
+  };
+
   const start = (resume: boolean) =>
     send({
       cmd: "datagen",
       action: "start",
       out: out.trim(),
-      targetPositions: Math.max(1, Number(target) || 1),
-      nodes: Math.max(1, Number(nodes) || 6000),
+      targetPositions: Math.max(1, num(target, 1000000, 1)),
+      nodes: Math.max(1, num(nodes, 6000, 1)),
       emit,
+      lam: Math.min(1, Math.max(0, num(lam, 0.5))),
+      skipPlies: num(skipPlies, 12),
+      maxPlies: Math.max(1, num(maxPlies, 200, 1)),
+      openingPlies: num(openingPlies, 8),
+      balance: num(balance, 150),
+      seed: num(seed, 12345),
       resume,
     });
 
@@ -175,6 +193,80 @@ export function DatagenPanel({
           ))}
         </div>
       </div>
+
+      <button
+        className="btn"
+        style={{ marginTop: 9, width: "100%" }}
+        onClick={() => setMore((v) => !v)}
+      >
+        {more ? "hide" : "show"} labelling options
+      </button>
+      {more && (
+        <div className="field-row">
+          <div>
+            <label className="lbl">skip plies</label>
+            <input
+              className="numbox"
+              type="text"
+              value={skipPlies}
+              title="opening plies left unlabelled"
+              onChange={(e) => setSkipPlies(e.currentTarget.value)}
+            />
+          </div>
+          <div>
+            <label className="lbl">max plies</label>
+            <input
+              className="numbox"
+              type="text"
+              value={maxPlies}
+              title="a game longer than this is scored a draw"
+              onChange={(e) => setMaxPlies(e.currentTarget.value)}
+            />
+          </div>
+          <div>
+            <label className="lbl">opening plies</label>
+            <input
+              className="numbox"
+              type="text"
+              value={openingPlies}
+              title="random balanced opening length"
+              onChange={(e) => setOpeningPlies(e.currentTarget.value)}
+            />
+          </div>
+          <div>
+            <label className="lbl">balance cp</label>
+            <input
+              className="numbox"
+              type="text"
+              value={balance}
+              title="reject an opening more lopsided than this"
+              onChange={(e) => setBalance(e.currentTarget.value)}
+            />
+          </div>
+          <div>
+            <label className="lbl">seed</label>
+            <input
+              className="numbox"
+              type="text"
+              value={seed}
+              title="same seed reproduces the same games"
+              onChange={(e) => setSeed(e.currentTarget.value)}
+            />
+          </div>
+          {emit === "blend" && (
+            <div>
+              <label className="lbl">lambda</label>
+              <input
+                className="numbox"
+                type="text"
+                value={lam}
+                title="WDL weight in the blend, 0..1"
+                onChange={(e) => setLam(e.currentTarget.value)}
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       {found && (
         <div className="resume-note">

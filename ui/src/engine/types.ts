@@ -115,15 +115,18 @@ export interface DatagenState {
   etaMinutes: number;
 }
 
+/** Everything that shapes the dataset. No pacing knobs: datagen runs flat out. */
 export interface DatagenOptions {
   out: string;
   targetPositions: number;
   nodes: number;
   emit: "raw" | "blend";
-  lam?: number;
-  skipPlies?: number;
-  maxPlies?: number;
-  seed?: number;
+  lam: number;
+  skipPlies: number;
+  maxPlies: number;
+  openingPlies: number;
+  balance: number;
+  seed: number;
   resume?: boolean;
 }
 

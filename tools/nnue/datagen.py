@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
-"""Self-play data generation for the RL loop.
+"""DEPRECATED -- superseded by the engine's native data generator.
+
+Use one of these instead; both write byte-identical rows because they share the
+helpers in src/datagen/selfplay.h:
+
+    ChessEngine datagen --net <net> --out <file> --games N --nodes N --threads N
+    ChessEngine-viz             # datagen mode: live games, crash-safe resume
+
+Driving the engine over UCI from Python is slower, and this path has drifted
+from the native one (it predates the native generator, the warm-history default
+and the current label handling). Kept so older commands in notes still run; not
+maintained, and not for new datasets.
+
+Original documentation follows.
+
+Self-play data generation for the RL loop.
 
 The C++ engine plays itself at fixed nodes from seeded, material-balanced
 openings. Each quiet position (not in check, past the opening book, with a
