@@ -67,16 +67,21 @@ export default function App() {
         </div>
         <div style={{ flex: 1 }} />
         {state && (
-          <div
-            className="num"
-            style={{ fontSize: 11, color: "var(--fg-dim)" }}
-          >
-            {state.thinking ? "thinking" : state.paused ? "paused" : "idle"}
-            {" · "}
-            {state.nnueActive ? "NNUE" : "classical"}
-            {" · "}
-            {state.threads} thread{state.threads === 1 ? "" : "s"}
-          </div>
+          <>
+            <span className={`chip${state.thinking ? " on" : ""}`}>
+              {state.thinking ? "thinking" : state.paused ? "paused" : "idle"}
+            </span>
+            <span className="chip">
+              {state.nnueActive ? "NNUE" : "classical"}
+            </span>
+            <span className="chip">
+              <b>{state.threads}</b> thread{state.threads === 1 ? "" : "s"}
+            </span>
+            <span className="chip">
+              <b>{state.search.nps ? Math.round(state.search.nps / 1000) : 0}</b>k
+              nps
+            </span>
+          </>
         )}
         <button
           className={`btn${showNet ? " on" : ""}`}
@@ -91,9 +96,11 @@ export default function App() {
           state={state}
           onMove={(uci) => send({ cmd: "move", value: uci })}
         />
-        {state && <EvalPanel s={state} />}
-        {state && <Controls s={state} send={send} />}
-        {state && <GamePanel s={state} />}
+        <div className="col-scroll">
+          {state && <EvalPanel s={state} />}
+          {state && <Controls s={state} send={send} />}
+          {state && <GamePanel s={state} />}
+        </div>
       </div>
 
       <div className="center">
@@ -105,16 +112,18 @@ export default function App() {
       </div>
 
       <div className="col col-right">
-        {showNet && source ? (
-          <NetInspector source={source} />
-        ) : (
-          state && (
-            <>
-              <SearchPanel s={state} />
-              <NetworkPanel s={state} />
-            </>
-          )
-        )}
+        <div className="col-scroll">
+          {showNet && source ? (
+            <NetInspector source={source} state={state} />
+          ) : (
+            state && (
+              <>
+                <SearchPanel s={state} />
+                <NetworkPanel s={state} />
+              </>
+            )
+          )}
+        </div>
       </div>
 
       <div className="statusbar">
@@ -131,7 +140,7 @@ export default function App() {
         {state && (
           <>
             <span className="num">seq {state.seq.toLocaleString("en-US")}</span>
-            <span className="num">{state.game.fen}</span>
+            <span className="num fen">{state.game.fen}</span>
           </>
         )}
         <div style={{ flex: 1 }} />
