@@ -242,6 +242,11 @@ private:
     emit("option name SmallNetThreshold type spin default 950 min 0 max 5000");
     emit("option name LazyEvalMargin type spin default 0 min 0 max 5000");
     emit("option name ShowStats type check default false");
+    // Move-ordering history normally resets per search. Keeping it warm across
+    // the short searches of one game is what datagen does; exposing it here
+    // lets the same binary play both ways so the idea can be SPRT-tested
+    // before it becomes a default.
+    emit("option name PersistOrdering type check default false");
     emit("uciok");
   }
 
@@ -327,6 +332,11 @@ private:
 
     if (name == "showstats") {
       statsInfo_ = (to_lower(value) == "true");
+      return;
+    }
+
+    if (name == "persistordering") {
+      search_.set_persist_ordering(to_lower(value) == "true");
       return;
     }
 
