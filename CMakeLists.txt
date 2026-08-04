@@ -363,6 +363,10 @@ add_test(NAME "viz.telemetry_exact" COMMAND test_viz frame)
 # The session driver keeps the board and the reported move list in agreement,
 # and self-play games actually reach terminal states.
 add_test(NAME "viz.session_selfplay" COMMAND test_viz session)
+# The wire format is binary: a renamed field would fail silently at runtime, so
+# the encoder must keep producing something the UI decoder understands. CI pairs
+# this with the TypeScript side (see the viz-ui job).
+add_test(NAME "viz.wire_fixture" COMMAND test_viz fixture "${CMAKE_BINARY_DIR}/viz_frame.bin")
 
 # Search regression fingerprint.
 find_program(BASH_EXECUTABLE bash)

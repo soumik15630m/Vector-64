@@ -283,10 +283,9 @@ jobs:
           done
           echo "ChessEngine and ChessEngine-nnue link chess_core only"
 
-  # The committed UI bundle is what gets embedded, so a stale one would ship a
-  # UI that does not match the sources.
-  viz-ui-bundle:
-    name: viz · ui bundle is current
+  # UI-side gates: types, the C++/TypeScript wire contract, and bundle freshness.
+  viz-ui:
+    name: viz · ui types, wire contract, bundle
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -299,6 +298,20 @@ jobs:
         working-directory: ui
       - run: npm run typecheck
         working-directory: ui
+
+      # The wire format is binary, so a renamed field would otherwise fail
+      # silently at runtime. Generate a frame with the REAL encoder and make the
+      # TypeScript decoder prove it still understands it.
+      - name: Build the fixture generator
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_NATIVE=OFF
+          cmake --build build --target test_viz -j
+      - name: C++ <-> TypeScript wire contract
+        run: |
+          ./build/bin/test_viz fixture "$RUNNER_TEMP/frame.bin"
+          VIZ_FIXTURE="$RUNNER_TEMP/frame.bin" npm test
+        working-directory: ui
+
       - name: Rebuild the bundle and diff it against the committed one
         working-directory: ui
         run: |
@@ -309,6 +322,35 @@ jobs:
             exit 1
           fi
           echo "bundle matches the sources"
+
+  # The browser build is a shipping target, so it has to keep compiling.
+  viz-wasm:
+    name: viz · wasm build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 'latest' rather than a pin: the build was validated against the version
+      # emsdk currently resolves latest to, and an unvalidated pin would be a
+      # worse guarantee than none. Pin once a specific version is verified here.
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-folder: emsdk-cache
+      - run: emcc --version
+      - name: Build the WebAssembly engine
+        run: bash tools/build_wasm.sh
+      - name: The deployable set must be complete
+        run: |
+          cd ui/dist-wasm
+          for f in stk-engine.js stk-engine.wasm stk-vector-64.nnue coi-serviceworker.js index.html; do
+            [ -s "$f" ] || { echo "missing or empty: $f"; exit 1; }
+          done
+          # The page must load the cross-origin-isolation shim before the engine,
+          # or SharedArrayBuffer (and so pthreads) is unavailable.
+          grep -q 'coi-serviceworker.js' index.html
+          # The real net ships, not a reduced one.
+          [ "$(stat -c%s stk-vector-64.nnue)" = "$(stat -c%s ../../nets/stk-vector-64.nnue)" ]
+          ls -la
 
   # ---- safety & style ----
   clang-format:

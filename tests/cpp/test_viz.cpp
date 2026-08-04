@@ -12,9 +12,11 @@
 #include "uci/uci_util.h"
 #include "viz/probe.h"
 #include "viz/session.h"
+#include "viz/wire.h"
 
 #include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <memory>
 #include <string>
 
@@ -208,13 +210,75 @@ bool session_test() {
 
 } // namespace
 
+// Emit one encoded state message so the TypeScript decoder can be checked
+// against the real C++ encoder. The fixture is generated from this binary at
+// test time rather than committed, so the two sides cannot drift: if a field is
+// renamed here, the UI's test fails on the next run.
+bool write_fixture(const char *path) {
+  auto net = std::make_unique<NNUE::Network>();
+  net->randomize(0x9E3779B97F4A7C15ULL);
+
+  Core::Position pos;
+  if (!pos.setFromFEN(FENS[1]))
+    return false;
+
+  Viz::Snapshot s;
+  s.seq = 4242;
+  s.mode = Viz::Mode::SelfPlay;
+  s.running = true;
+  s.paused = false;
+  s.thinking = true;
+  s.nnueActive = true;
+  s.threads = 2;
+  s.engineColor = 1;
+  s.game.fen = pos.toFEN();
+  s.game.startFen = FENS[0];
+  s.game.moves = {"e2e4", "e7e5", "g1f3"};
+  s.game.lastMove = "g1f3";
+  s.game.ply = 3;
+  s.game.over = false;
+  s.game.gameIndex = 7;
+  s.game.wins = 2;
+  s.game.draws = 3;
+  s.game.losses = 1;
+  s.search.depth = 11;
+  s.search.seldepth = 17;
+  s.search.scoreCp = 42;
+  s.search.nodes = 123456;
+  s.search.tbHits = 5;
+  s.search.elapsedMs = 250;
+  s.search.nps = 493824;
+  s.search.pv = {"d2d4", "d7d5", "c2c4"};
+  s.search.qsearchTtHitRate = 31.5;
+  s.search.negamaxTtHitRate = 58.25;
+  s.legalMoves = {"e2e4", "d2d4"};
+  s.frame = Viz::capture(pos, *net);
+
+  const std::string blob = Viz::encode_state(s);
+  std::ofstream out(path, std::ios::binary);
+  if (!out)
+    return false;
+  out.write(blob.data(), static_cast<std::streamsize>(blob.size()));
+  if (!out)
+    return false;
+  std::printf("wrote %zu bytes of encoded state to %s\n", blob.size(), path);
+  return true;
+}
+
 int main(int argc, char **argv) {
   Core::Attacks::init();
   Core::Zobrist::init();
 
   // Selector so ctest can register each check separately:
-  //   test_viz [all|frame|session]
+  //   test_viz [all|frame|session|fixture <path>]
   const std::string which = argc > 1 ? argv[1] : "all";
+  if (which == "fixture") {
+    if (argc < 3) {
+      std::printf("usage: test_viz fixture <path>\n");
+      return 2;
+    }
+    return write_fixture(argv[2]) ? 0 : 1;
+  }
   if (which == "session")
     return session_test() ? 0 : 1;
 
