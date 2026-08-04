@@ -302,6 +302,8 @@ void EngineSearch::set_lazy_eval_margin(int cp) {
 
 void EngineSearch::set_persist_ordering(bool v) { persistOrdering_ = v; }
 
+void EngineSearch::set_multipv(int n) { multiPv_ = n < 1 ? 1 : n; }
+
 void EngineSearch::clear() {
   tt_->clear();
   ordering_.clear();
@@ -1117,25 +1119,67 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
     }
 
     int score;
-    while (true) {
-      score = search_root(root, rootMoves, depth, alpha, beta, out.bestMove,
-                          limits, callbacks);
+    std::vector<RootLine> lines;
+
+    if (multiPv_ > 1) {
+      // MultiPV: search the best N root moves each with a FULL window, so every
+      // reported line has an exact score rather than a fail-low bound. This
+      // searches more than single-PV does, which is why it is opt-in: the
+      // default path below must stay byte-for-byte the same search.
+      Core::MoveList remaining = rootMoves;
+      const int want = std::min(multiPv_, remaining.size());
+      for (int pvIdx = 0; pvIdx < want; ++pvIdx) {
+        const int s = search_root(
+            root, remaining, depth, -INF_SCORE, INF_SCORE,
+            pvIdx == 0 ? out.bestMove : Core::Move::none(), limits, callbacks);
+        if (stopped_)
+          break;
+        RootLine line;
+        line.scoreCp = s;
+        line.move = pvLen_[0] > 0 ? pvTable_[0][0] : remaining[0];
+        for (int k = 0; k < pvLen_[0]; ++k)
+          line.pv.push_back(pvTable_[0][k]);
+        lines.push_back(std::move(line));
+
+        // Drop the move just reported and search the rest for the next line.
+        Core::MoveList rest;
+        for (int i = 0; i < remaining.size(); ++i)
+          if (remaining[i] != lines.back().move)
+            rest.push_back(remaining[i]);
+        remaining = rest;
+        if (remaining.size() == 0)
+          break;
+      }
       if (stopped_)
         break;
-
-      if (score <= alpha) {
-        beta = (alpha + beta) / 2;
-        alpha = std::max(-INF_SCORE, score - delta);
-      } else if (score >= beta) {
-        beta = std::min(INF_SCORE, score + delta);
-      } else {
-        break;
+      score = lines.empty() ? prevScore : lines[0].scoreCp;
+      // Re-publish the best line's PV so the reporting below is consistent.
+      if (!lines.empty()) {
+        pvLen_[0] = static_cast<int>(lines[0].pv.size());
+        for (size_t k = 0; k < lines[0].pv.size(); ++k)
+          pvTable_[0][k] = lines[0].pv[k];
       }
-      delta += delta / 2 + 5;
-    }
+    } else {
+      while (true) {
+        score = search_root(root, rootMoves, depth, alpha, beta, out.bestMove,
+                            limits, callbacks);
+        if (stopped_)
+          break;
 
-    if (stopped_)
-      break; // discard the partial iteration
+        if (score <= alpha) {
+          beta = (alpha + beta) / 2;
+          alpha = std::max(-INF_SCORE, score - delta);
+        } else if (score >= beta) {
+          beta = std::min(INF_SCORE, score + delta);
+        } else {
+          break;
+        }
+        delta += delta / 2 + 5;
+      }
+
+      if (stopped_)
+        break; // discard the partial iteration
+    }
 
     if (pvLen_[0] > 0)
       out.bestMove = pvTable_[0][0];
@@ -1159,6 +1203,7 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
       info.pvLen = pvLen_[0];
       info.qsearchTtHitRate = qProbes_ > 0 ? (100.0 * qHits_ / qProbes_) : 0.0;
       info.negamaxTtHitRate = nProbes_ > 0 ? (100.0 * nHits_ / nProbes_) : 0.0;
+      info.lines = lines;
       callbacks.onInfo(info);
     }
   }

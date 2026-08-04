@@ -64,6 +64,16 @@ describe("wire format contract", () => {
     expect(state.search.qsearchTtHitRate).toBeCloseTo(31.5, 5);
   });
 
+  it("decodes the candidate moves being compared", () => {
+    const c = state.search.candidates;
+    expect(c).toHaveLength(3);
+    expect(c[0]).toEqual({ move: "d2d4", scoreCp: 42, pv: ["d2d4", "d7d5"] });
+    expect(c[2].scoreCp).toBe(-7);
+    // Ranked best first, which the UI relies on.
+    for (let i = 1; i < c.length; i++)
+      expect(c[i].scoreCp).toBeLessThanOrEqual(c[i - 1].scoreCp);
+  });
+
   it("carries the architecture from the engine, not hard-coded here", () => {
     const a = state.arch;
     expect(a.hidden).toBe(1024);

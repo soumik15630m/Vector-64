@@ -97,7 +97,7 @@ export function decodeState(buf: ArrayBuffer): EngineState {
     engineColor: header.engineColor,
     arch: header.arch,
     game: header.game,
-    search: header.search,
+    search: { ...header.search, candidates: header.candidates ?? [] },
     legalMoves: header.legalMoves ?? [],
     frame,
   };

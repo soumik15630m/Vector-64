@@ -28,6 +28,13 @@ export interface GameState {
   losses: number;
 }
 
+/** A root move the engine actually searched, with the score it gave it. */
+export interface Candidate {
+  move: string;
+  scoreCp: number;
+  pv: string[];
+}
+
 export interface SearchInfo {
   depth: number;
   seldepth: number;
@@ -39,6 +46,8 @@ export interface SearchInfo {
   pv: string[];
   qsearchTtHitRate: number;
   negamaxTtHitRate: number;
+  /** Ranked best first. Empty when the engine is running single-PV. */
+  candidates: Candidate[];
 }
 
 export interface PerspectiveInfo {

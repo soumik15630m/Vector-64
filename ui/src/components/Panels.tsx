@@ -67,6 +67,63 @@ export function EvalPanel({ s }: { s: EngineState }) {
   );
 }
 
+/**
+ * The candidate moves the engine actually searched, each with the exact score
+ * it gave that move. This is where the decision becomes visible as a choice:
+ * the network produces an evaluation, and these are the options it was weighed
+ * against.
+ */
+export function CandidatesPanel({
+  s,
+  onHover,
+}: {
+  s: EngineState;
+  onHover?: (uci: string | null) => void;
+}) {
+  const c = s.search.candidates;
+  if (c.length === 0) return null;
+  // Bars are relative to the spread of the candidates on screen, so small
+  // differences stay visible instead of collapsing to equal-looking rows.
+  const scores = c.map((x) => x.scoreCp);
+  const lo = Math.min(...scores);
+  const hi = Math.max(...scores);
+  const span = Math.max(1, hi - lo);
+  const stm = s.game.fen.split(" ")[1] === "b" ? -1 : 1;
+
+  return (
+    <div className="panel">
+      <h3>
+        Candidates <i>{c.length} searched</i>
+      </h3>
+      {c.map((x, i) => {
+        const white = x.scoreCp * stm;
+        return (
+          <div
+            key={x.move}
+            className={`cand${i === 0 ? " best" : ""}`}
+            onMouseEnter={() => onHover?.(x.move)}
+            onMouseLeave={() => onHover?.(null)}
+            title={x.pv.join(" ")}
+          >
+            <span className="rank num">{i + 1}</span>
+            <span className="mv num">{x.move}</span>
+            <span className="bar">
+              <i style={{ width: `${((x.scoreCp - lo) / span) * 100}%` }} />
+            </span>
+            <span className={`sc num ${white >= 0 ? "pos" : "neg"}`}>
+              {white >= 0 ? "+" : "−"}
+              {Math.abs(white / 100).toFixed(2)}
+            </span>
+          </div>
+        );
+      })}
+      <div className="axis">
+        <span>white perspective · exact scores, full window each</span>
+      </div>
+    </div>
+  );
+}
+
 export function SearchPanel({ s }: { s: EngineState }) {
   const q = s.search;
   return (

@@ -66,6 +66,7 @@ bool mode_from_name(const std::string &s, Mode &out) {
 Session::Session(Config cfg)
     : cfg_(cfg), search_(static_cast<size_t>(cfg.hashMb)) {
   search_.set_threads(std::max(1, cfg_.threads));
+  search_.set_multipv(std::max(1, cfg_.multiPv));
   moveDelayMs_.store(cfg_.moveDelayMs);
   nodes_.store(cfg_.nodes);
   rngState_ = cfg_.seed ? cfg_.seed : 0x9E3779B97F4A7C15ULL;
@@ -337,6 +338,14 @@ Search::Result Session::think() {
                  : 0;
     si.qsearchTtHitRate = info.qsearchTtHitRate;
     si.negamaxTtHitRate = info.negamaxTtHitRate;
+    for (const Search::RootLine &l : info.lines) {
+      Candidate c;
+      c.move = UCI::move_to_uci(l.move);
+      c.scoreCp = l.scoreCp;
+      for (Core::Move m : l.pv)
+        c.pv.push_back(UCI::move_to_uci(m));
+      si.candidates.push_back(std::move(c));
+    }
 
     // Walk the principal variation and probe its leaf: that is the position
     // the engine is actually weighing at this depth. Each move is validated,

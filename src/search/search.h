@@ -23,6 +23,16 @@ struct Limits {
   Core::MoveList searchMoves{}; // empty = search all root moves
 };
 
+// One root move and what the search concluded about it. Only the first line of
+// a MultiPV search carries an exact score; the rest are searched with a full
+// window too, so they are exact as well -- but a single-PV search reports
+// nothing here, because its non-best root moves only ever get bounds.
+struct RootLine {
+  Core::Move move = Core::Move::none();
+  int scoreCp = 0;
+  std::vector<Core::Move> pv;
+};
+
 struct IterInfo {
   int depth = 0;
   int seldepth = 0;
@@ -34,6 +44,8 @@ struct IterInfo {
   int pvLen = 0;
   double qsearchTtHitRate = 0.0;
   double negamaxTtHitRate = 0.0;
+  // Populated only when MultiPV > 1; ordered best first.
+  std::vector<RootLine> lines;
 };
 
 struct Callbacks {
@@ -61,6 +73,10 @@ public:
   // Off by default so normal play (and the bench signature) is unchanged;
   // callers reset per game via clear().
   void set_persist_ordering(bool v);
+  // Search the best N root moves with a full window each, so every reported
+  // line has an exact score. N == 1 (the default) leaves the search exactly as
+  // it was -- this must stay true, the bench signature depends on it.
+  void set_multipv(int n);
   void clear();
   bool load_nnue(const std::string &path);
   bool load_nnue_small(const std::string &path);
@@ -164,6 +180,7 @@ private:
   // Datagen: when set, search_internal keeps the ordering history warm across
   // calls (no per-search clear). See set_persist_ordering.
   bool persistOrdering_ = false;
+  int multiPv_ = 1;
 
 #ifdef ENGINE_PROF
   // Cycle attribution for the hot-path audit (rdtsc; build with -DENGINE_PROF).

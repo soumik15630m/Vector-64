@@ -8,6 +8,7 @@ import { Controls } from "./components/Controls";
 import { NeuronField } from "./components/NeuronField";
 import { NetInspector } from "./components/NetInspector";
 import {
+  CandidatesPanel,
   EvalPanel,
   GamePanel,
   NetworkPanel,
@@ -22,6 +23,8 @@ export default function App() {
   const [state, setState] = useState<EngineState | null>(null);
   const [conn, setConn] = useState<ConnectionState>("connecting");
   const [showNet, setShowNet] = useState(false);
+  // Hovering a candidate previews it on the board.
+  const [hoverMove, setHoverMove] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -94,10 +97,12 @@ export default function App() {
       <div className="col col-left">
         <Board
           state={state}
+          highlight={hoverMove}
           onMove={(uci) => send({ cmd: "move", value: uci })}
         />
         <div className="col-scroll">
           {state && <EvalPanel s={state} />}
+          {state && <CandidatesPanel s={state} onHover={setHoverMove} />}
           {state && <Controls s={state} send={send} />}
           {state && <GamePanel s={state} />}
         </div>

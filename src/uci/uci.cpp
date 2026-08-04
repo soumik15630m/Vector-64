@@ -247,6 +247,7 @@ private:
     // lets the same binary play both ways so the idea can be SPRT-tested
     // before it becomes a default.
     emit("option name PersistOrdering type check default false");
+    emit("option name MultiPV type spin default 1 min 1 max 32");
     emit("uciok");
   }
 
@@ -337,6 +338,13 @@ private:
 
     if (name == "persistordering") {
       search_.set_persist_ordering(to_lower(value) == "true");
+      return;
+    }
+
+    if (name == "multipv") {
+      int n = 1;
+      if (parse_int(value, n))
+        search_.set_multipv(n);
       return;
     }
 

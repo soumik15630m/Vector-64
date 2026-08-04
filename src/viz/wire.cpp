@@ -94,6 +94,11 @@ std::string encode_state(const Snapshot &s) {
                  {"qsearchTtHitRate", s.search.qsearchTtHitRate},
                  {"negamaxTtHitRate", s.search.negamaxTtHitRate}};
 
+  json cands = json::array();
+  for (const Candidate &c : s.search.candidates)
+    cands.push_back({{"move", c.move}, {"scoreCp", c.scoreCp}, {"pv", c.pv}});
+  h["candidates"] = cands;
+
   h["legalMoves"] = s.legalMoves;
 
   // Architecture constants, so the UI lays out the network from the engine's

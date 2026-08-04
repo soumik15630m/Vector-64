@@ -6,6 +6,8 @@ import type { EngineState } from "../engine/types";
 
 interface Props {
   state: EngineState | null;
+  /** A candidate move to preview, drawn instead of the engine's intent. */
+  highlight?: string | null;
   onMove?: (uci: string) => void;
 }
 
@@ -14,7 +16,7 @@ interface Props {
  * legal-move list -- the UI never computes legality itself, so what you can
  * play is exactly what the engine accepts.
  */
-export function Board({ state, onMove }: Props) {
+export function Board({ state, highlight, onMove }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const api = useRef<Api | null>(null);
   const moveCb = useRef(onMove);
@@ -58,7 +60,7 @@ export function Board({ state, onMove }: Props) {
     const last = state.game.lastMove;
     // Show what the engine intends to play next as an arrow, so the board and
     // the network view agree on the decision being made.
-    const intend = state.search.pv[0];
+    const intend = highlight ?? state.search.pv[0];
     const shapes =
       intend && intend.length >= 4 && !state.game.over
         ? [
@@ -98,7 +100,7 @@ export function Board({ state, onMove }: Props) {
         },
       },
     });
-  }, [state]);
+  }, [state, highlight]);
 
   return <div className="board-wrap" ref={ref} />;
 }

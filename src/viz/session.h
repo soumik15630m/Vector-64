@@ -40,6 +40,16 @@ struct Config {
   int maxPlies = 300;
   uint64_t seed = 0;
   int l1TopK = 12;
+  // Candidate moves to evaluate per search. >1 makes the decision visible as a
+  // comparison; it costs extra search, which is why the engine defaults to 1.
+  int multiPv = 4;
+};
+
+// One candidate move with the score the search actually gave it.
+struct Candidate {
+  std::string move;
+  int scoreCp = 0;
+  std::vector<std::string> pv;
 };
 
 struct SearchInfo {
@@ -53,6 +63,7 @@ struct SearchInfo {
   std::vector<std::string> pv;
   double qsearchTtHitRate = 0.0;
   double negamaxTtHitRate = 0.0;
+  std::vector<Candidate> candidates;
 };
 
 struct GameState {

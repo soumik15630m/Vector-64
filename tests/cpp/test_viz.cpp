@@ -251,6 +251,9 @@ bool write_fixture(const char *path) {
   s.search.pv = {"d2d4", "d7d5", "c2c4"};
   s.search.qsearchTtHitRate = 31.5;
   s.search.negamaxTtHitRate = 58.25;
+  s.search.candidates = {{"d2d4", 42, {"d2d4", "d7d5"}},
+                         {"e2e4", 31, {"e2e4", "e7e5"}},
+                         {"g1f3", -7, {"g1f3"}}};
   s.legalMoves = {"e2e4", "d2d4"};
   s.frame = Viz::capture(pos, *net);
 
