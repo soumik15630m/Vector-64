@@ -429,13 +429,16 @@ input[type="text"]:focus {
   font-family: var(--mono);
   font-size: 11px;
   line-height: 1.8;
-  height: 118px; /* fixed: the panel must not grow with the game */
+  /* Fills whatever the (explicitly sized) panel leaves over, so resizing the
+     panel resizes the list. The panel's height is fixed, so the list never
+     grows the panel as moves accumulate. */
+  flex: 1 1 auto;
+  min-height: 28px;
   overflow-y: auto;
   color: var(--fg-dim);
   word-break: break-all;
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
-  flex: none;
 }
 .moves .mv.last {
   color: var(--accent);
@@ -447,12 +450,12 @@ input[type="text"]:focus {
   font-family: var(--mono);
   font-size: 11px;
   line-height: 1.65;
-  height: 46px; /* fixed for the same reason */
+  flex: 1 1 auto;
+  min-height: 26px;
   overflow-y: auto;
   color: var(--fg-dim);
   word-break: break-all;
   scrollbar-width: thin;
-  flex: none;
 }
 
 /* --- board ------------------------------------------------------------- */
@@ -642,11 +645,25 @@ input[type="text"]:focus {
   font-family: var(--mono);
   font-size: 10px;
   color: var(--fg-faint);
-  margin-top: 6px;
-  max-width: 168px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  margin-top: 3px;
+  max-width: 190px;
+  white-space: normal;
+  line-height: 1.45;
+}
+/* The move the neuron is feeding: never abbreviated, it is the whole point. */
+.decision .feeds {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-dim);
+}
+.decision .feeds b {
+  color: var(--accent);
+  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: 0.02em;
 }
 .field-empty {
   position: absolute;
@@ -803,13 +820,15 @@ textarea.pos-input:focus {
 }
 
 /* --- resizable tiles ---------------------------------------------------- */
-/* Native vertical resize on every panel: cheap, discoverable, and it cannot
-   break the grid because the columns scroll. */
-.col-scroll > .panel {
+/* Only panels with a flexible region are resizable, and the region absorbs the
+   change: dragging a panel taller gives you MORE LIST, not more padding. Those
+   panels carry an explicit height, which is also what stops them reflowing as
+   the game grows. */
+.panel.rz {
   resize: vertical;
-  overflow: auto;
+  overflow: hidden;
 }
-.col-scroll > .panel::-webkit-resizer {
+.panel.rz::-webkit-resizer {
   background: transparent;
 }
 
@@ -954,4 +973,42 @@ textarea.pos-input:focus {
   gap: 12px;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* --- clocks ------------------------------------------------------------- */
+.clocks {
+  display: grid;
+  gap: 6px;
+}
+.clk {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  transition: all 0.25s var(--ease);
+}
+.clk.on {
+  border-color: var(--accent-deep);
+  background: var(--accent-glow);
+}
+.clk .who {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.clk.on .who {
+  color: var(--accent);
+}
+.clk .t {
+  font-size: 19px;
+  font-weight: 300;
+  color: var(--fg);
+  letter-spacing: 0.02em;
+}
+.clk.low .t {
+  color: var(--bad);
 }

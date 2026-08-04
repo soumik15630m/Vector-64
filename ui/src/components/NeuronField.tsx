@@ -51,6 +51,8 @@ function describeCard(
   sub: string;
   rows: [string, string][];
   line?: string;
+  /** The move this neuron is feeding, shown in full rather than truncated. */
+  move?: string;
   tone?: "pos" | "neg";
 } | null {
   switch (h.layer) {
@@ -103,9 +105,8 @@ function describeCard(
         // L1 feeds L2 through a clip and a shift, so its effect on the final
         // number is NOT linear -- say what it does (feeds the stack) rather
         // than implying a centipawn effect it does not have.
-        line: pv[0]
-          ? `1 of ${arch.l1} inputs to the eval behind ${pv[0]}`
-          : undefined,
+        move: pv[0],
+        line: `1 of ${arch.l1} inputs to this evaluation`,
         tone: drive > 0 ? "pos" : drive < 0 ? "neg" : undefined,
       };
     }
@@ -126,9 +127,13 @@ function describeCard(
         ],
         // L2 feeds the output directly, so this one really is a signed change
         // to the evaluation behind the chosen move.
-        line: pv[0]
-          ? `${c > 0 ? "raises" : c < 0 ? "lowers" : "does not move"} the eval behind ${pv[0]}`
-          : undefined,
+        move: pv[0],
+        line:
+          c > 0
+            ? "raises this evaluation"
+            : c < 0
+              ? "lowers this evaluation"
+              : "does not move this evaluation",
         tone: c > 0 ? "pos" : c < 0 ? "neg" : undefined,
       };
     }
@@ -335,6 +340,11 @@ export function NeuronField({
               </div>
             ))}
           </div>
+          {card.move && (
+            <div className="feeds">
+              feeds <b>{card.move}</b>
+            </div>
+          )}
           {card.line && <div className="line">{card.line}</div>}
         </div>
       )}

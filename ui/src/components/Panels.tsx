@@ -124,10 +124,51 @@ export function CandidatesPanel({
   );
 }
 
+const clock = (ms: number) => {
+  const t = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+};
+
+/**
+ * Human-mode clocks. The engine keeps searching while your clock runs, so the
+ * network view stays live on your time -- it is thinking, not waiting.
+ */
+export function ClockPanel({ s }: { s: EngineState }) {
+  if (s.mode !== "human") return null;
+  const g = s.game;
+  const stm = g.fen.split(" ")[1] === "b" ? 1 : 0; // 0 = white to move
+  const low = (ms: number) => ms < 30000;
+  return (
+    <div className="panel">
+      <h3>
+        Clock <i>{g.clockRunning ? "running" : "paused"}</i>
+      </h3>
+      <div className="clocks">
+        {([0, 1] as const).map((side) => {
+          const ms = side === 0 ? g.whiteMs : g.blackMs;
+          const isEngine = s.engineColor === side;
+          return (
+            <div
+              key={side}
+              className={`clk${stm === side ? " on" : ""}${low(ms) ? " low" : ""}`}
+            >
+              <span className="who">
+                {side === 0 ? "white" : "black"}
+                {isEngine ? " · engine" : " · you"}
+              </span>
+              <span className="t num">{clock(ms)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function SearchPanel({ s }: { s: EngineState }) {
   const q = s.search;
   return (
-    <div className="panel">
+    <div className="panel rz" style={{ height: 262 }}>
       <h3>
         Search <i>{s.thinking ? "thinking" : "idle"}</i>
       </h3>
@@ -188,7 +229,7 @@ export function GamePanel({ s }: { s: EngineState }) {
   }, [g.ply, g.gameIndex]);
 
   return (
-    <div className="panel" style={{ minHeight: 0 }}>
+    <div className="panel rz" style={{ height: 250 }}>
       <h3>
         Game <i>#{g.gameIndex}</i>
       </h3>

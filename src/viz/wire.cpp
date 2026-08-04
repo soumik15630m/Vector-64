@@ -82,7 +82,10 @@ std::string encode_state(const Snapshot &s) {
                {"gameIndex", s.game.gameIndex},
                {"wins", s.game.wins},
                {"draws", s.game.draws},
-               {"losses", s.game.losses}};
+               {"losses", s.game.losses},
+               {"whiteMs", s.game.whiteMs},
+               {"blackMs", s.game.blackMs},
+               {"clockRunning", s.game.clockRunning}};
 
   h["search"] = {{"depth", s.search.depth},
                  {"seldepth", s.search.seldepth},
@@ -195,6 +198,10 @@ std::string handle_control(Session &session, const std::string &body,
     session.set_nodes(intVal(20000));
   } else if (cmd == "threads") {
     session.set_threads(intVal(1));
+  } else if (cmd == "randomopening") {
+    session.set_random_opening(j.contains("value") && j["value"].is_boolean()
+                                   ? j["value"].get<bool>()
+                                   : false);
   } else if (cmd == "enginecolor") {
     session.set_engine_color(intVal(1));
   } else if (cmd == "mode") {

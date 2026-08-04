@@ -62,6 +62,7 @@ export function Controls({ s, send }: Props) {
   // cannot push it out of range.
   const maxThreads = Math.max(1, s.hardwareThreads || 1);
   const [threads, setThreads] = useState(Math.min(s.threads, maxThreads));
+  const [randomOpening, setRandomOpening] = useState(false);
 
   return (
     <div className="panel">
@@ -104,6 +105,20 @@ export function Controls({ s, send }: Props) {
             }
           >
             engine {s.engineColor ? "black" : "white"}
+          </button>
+        )}
+        {s.mode === "selfplay" && (
+          <button
+            className={`btn${randomOpening ? " on" : ""}`}
+            title="start each game from a random balanced opening instead of the initial position"
+            onClick={() => {
+              setRandomOpening((v) => {
+                send({ cmd: "randomopening", value: !v });
+                return !v;
+              });
+            }}
+          >
+            random opening
           </button>
         )}
       </div>

@@ -35,11 +35,17 @@ struct Config {
   int hashMb = 32;
   int threads = 1;
   int moveDelayMs = 300; // pacing so self-play is watchable
-  int openingPlies = 8;  // self-play random opening
+  // 0 = start from the normal starting position. Self-play used a random
+  // balanced opening so games differed, but starting mid-position is confusing
+  // to watch, so the default is now the real start and variety is opt-in.
+  int openingPlies = 0;
   int balance = 150;
   int maxPlies = 300;
   uint64_t seed = 0;
   int l1TopK = 12;
+  // Human mode clock, per side. The engine also keeps thinking on the
+  // opponent's time (see ponder handling in human_step).
+  int clockMs = 300000; // 5 minutes
   // Candidate moves to evaluate per search. >1 makes the decision visible as a
   // comparison; it costs extra search, which is why the engine defaults to 1.
   int multiPv = 4;
@@ -78,6 +84,10 @@ struct GameState {
                       // maxplies
   int gameIndex = 0;
   int wins = 0, draws = 0, losses = 0; // session tally, white perspective
+  // Human-mode clocks, milliseconds remaining.
+  int whiteMs = 0;
+  int blackMs = 0;
+  bool clockRunning = false;
 };
 
 // One coherent view of the session. `seq` increments on every publish so a
@@ -126,6 +136,7 @@ public:
   // Human mode: apply the user's move if legal.
   bool play_move(const std::string &uci);
   void set_engine_color(int color);
+  void set_random_opening(bool v);
 
   Snapshot snapshot() const;
   // Wait until the published sequence passes `have` (or `timeoutMs` elapses).
@@ -187,7 +198,13 @@ private:
   std::string result_, reason_;
   uint64_t rngState_ = 0;
   bool pendingReset_ = false;
-  bool pendingRandomOpening_ = true;
+  bool pendingRandomOpening_ = false;
+  bool randomOpening_ = false;
+  // Human-mode clocks. Only the side to move burns time.
+  int whiteMs_ = 0, blackMs_ = 0;
+  std::chrono::steady_clock::time_point turnStart_{};
+  bool clockRunning_ = false;
+  void tick_clock();
   // Bumped whenever the board changes from outside the worker, so a search
   // whose position was replaced mid-flight discards its result.
   uint64_t boardGen_ = 0;

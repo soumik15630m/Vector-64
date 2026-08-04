@@ -26,6 +26,10 @@ export interface GameState {
   wins: number;
   draws: number;
   losses: number;
+  /** Human-mode clocks, milliseconds remaining. */
+  whiteMs: number;
+  blackMs: number;
+  clockRunning: boolean;
 }
 
 /** A root move the engine actually searched, with the score it gave it. */
@@ -122,6 +126,7 @@ export type ControlCommand =
   | { cmd: "delay"; value: number }
   | { cmd: "nodes"; value: number }
   | { cmd: "threads"; value: number }
+  | { cmd: "randomopening"; value: boolean }
   | { cmd: "enginecolor"; value: number }
   | { cmd: "mode"; value: Mode }
   | { cmd: "position"; fen: string; moves: string[] }

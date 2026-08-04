@@ -9,6 +9,7 @@ import { NeuronField } from "./components/NeuronField";
 import { NetInspector } from "./components/NetInspector";
 import {
   CandidatesPanel,
+  ClockPanel,
   EvalPanel,
   GamePanel,
   NetworkPanel,
@@ -160,6 +161,7 @@ export default function App() {
           />
         </div>
         <div className="col-scroll">
+          {state && <ClockPanel s={state} />}
           {state && <EvalPanel s={state} />}
           {state && <CandidatesPanel s={state} onHover={setHoverMove} />}
           {state && <Controls s={state} send={send} />}

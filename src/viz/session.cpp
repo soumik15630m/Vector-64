@@ -72,7 +72,8 @@ Session::Session(Config cfg)
   moveDelayMs_.store(cfg_.moveDelayMs);
   nodes_.store(cfg_.nodes);
   rngState_ = cfg_.seed ? cfg_.seed : 0x9E3779B97F4A7C15ULL;
-  reset_game(true);
+  randomOpening_ = cfg_.openingPlies > 0;
+  reset_game(randomOpening_);
   publish();
 }
 
@@ -112,7 +113,7 @@ void Session::set_mode(Mode m) {
       return;
     mode_ = m;
     pendingReset_ = true;
-    pendingRandomOpening_ = (m == Mode::SelfPlay);
+    pendingRandomOpening_ = randomOpening_ && m == Mode::SelfPlay;
     ++boardGen_;
   }
   abortSearch_.store(true);
@@ -150,6 +151,14 @@ void Session::set_threads(int n) {
   cv_.notify_all();
 }
 
+void Session::set_random_opening(bool v) {
+  {
+    std::lock_guard<std::mutex> lk(cmdMu_);
+    randomOpening_ = v;
+  }
+  publish();
+}
+
 void Session::set_engine_color(int color) {
   {
     std::lock_guard<std::mutex> lk(cmdMu_);
@@ -162,7 +171,7 @@ void Session::new_game() {
   {
     std::lock_guard<std::mutex> lk(cmdMu_);
     pendingReset_ = true;
-    pendingRandomOpening_ = (mode_ == Mode::SelfPlay);
+    pendingRandomOpening_ = randomOpening_ && mode_ == Mode::SelfPlay;
     ++boardGen_;
   }
   abortSearch_.store(true);
@@ -219,12 +228,35 @@ bool Session::play_move(const std::string &uci) {
   return true;
 }
 
-// Caller holds cmdMu_.
+// Caller holds cmdMu_. Charges the mover for the time they just used.
 void Session::apply_move_internal(Core::Move m) {
+  tick_clock();
   Core::UndoInfo ui;
   moves_.push_back(UCI::move_to_uci(m));
   pos_.make_move(m, ui);
   history_.push_back(pos_.hash());
+}
+
+// Caller holds cmdMu_. Deducts elapsed time from whoever is on move and
+// restarts the stopwatch; flagging ends the game.
+void Session::tick_clock() {
+  if (!clockRunning_)
+    return;
+  const auto now = std::chrono::steady_clock::now();
+  const int used = static_cast<int>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(now - turnStart_)
+          .count());
+  turnStart_ = now;
+  int &clk = pos_.side_to_move() == Core::WHITE ? whiteMs_ : blackMs_;
+  clk -= used;
+  if (clk <= 0) {
+    clk = 0;
+    if (!gameOver_) {
+      gameOver_ = true;
+      result_ = pos_.side_to_move() == Core::WHITE ? "0-1" : "1-0";
+      reason_ = "time";
+    }
+  }
 }
 
 void Session::reset_game(bool randomOpening) {
@@ -251,6 +283,8 @@ void Session::reset_game(bool randomOpening) {
   result_.clear();
   reason_.clear();
   ++gameIndex_;
+  whiteMs_ = blackMs_ = std::max(1000, cfg_.clockMs);
+  turnStart_ = std::chrono::steady_clock::now();
   search_.clear(); // games are independent
 }
 
@@ -307,6 +341,11 @@ void Session::publish() {
     g.wins = wins_;
     g.draws = draws_;
     g.losses = losses_;
+    if (clockRunning_)
+      tick_clock();
+    g.whiteMs = whiteMs_;
+    g.blackMs = blackMs_;
+    g.clockRunning = clockRunning_;
     m = mode_;
     ec = engineColor_;
   }
@@ -497,19 +536,31 @@ void Session::analysis_step() {
 }
 
 void Session::human_step() {
-  bool engineToMove;
+  bool engineToMove = false;
+  bool live = false;
   {
     std::lock_guard<std::mutex> lk(cmdMu_);
     // Short-circuits: detect_terminal (which records the result) only runs
     // while the game is still live.
     const bool finished = gameOver_ || detect_terminal(has_legal_move(pos_));
+    live = !finished;
+    // Charge the side on move for the time that has passed; this is also what
+    // flags a player who runs out.
+    tick_clock();
     engineToMove =
-        !finished && (static_cast<int>(pos_.side_to_move()) == engineColor_);
+        live && (static_cast<int>(pos_.side_to_move()) == engineColor_);
   }
   if (!engineToMove) {
+    // The opponent's clock is running. Keep searching the position they are
+    // deciding on, so the network view goes on evolving instead of freezing --
+    // this is the engine genuinely thinking on their time, not a replay.
+    if (live) {
+      think();
+      abortSearch_.store(false);
+    }
     publish();
     std::unique_lock<std::mutex> lk(mu_);
-    cv_.wait_for(lk, std::chrono::milliseconds(100));
+    cv_.wait_for(lk, std::chrono::milliseconds(live ? 30 : 200));
     return;
   }
   const Search::Result r = think();
@@ -557,6 +608,11 @@ void Session::run() {
     {
       std::lock_guard<std::mutex> lk(cmdMu_);
       m = mode_;
+      const bool wantClock = (m == Mode::Human) && !paused_.load();
+      if (wantClock != clockRunning_) {
+        clockRunning_ = wantClock;
+        turnStart_ = std::chrono::steady_clock::now();
+      }
     }
     switch (m) {
     case Mode::SelfPlay:
