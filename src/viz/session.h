@@ -7,6 +7,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -104,6 +105,10 @@ struct Snapshot {
   GameState game;
   SearchInfo search;
   VizFrame frame;
+  // Same position through a second net, when one is loaded.
+  bool compareActive = false;
+  VizFrame compareFrame;
+  std::string compareName;
   std::vector<std::string> legalMoves; // side to move, for Human mode
 };
 
@@ -117,6 +122,15 @@ public:
   // Load the net the engine (and therefore the visualization) uses.
   bool load_net(const std::string &path);
   bool load_net_buffer(const unsigned char *data, std::size_t size);
+  // A second net, evaluated on the same positions so two nets can be compared
+  // directly. Empty path clears it.
+  bool load_compare_net(const std::string &path);
+  bool has_compare_net() const;
+
+  // Record every published frame as JSONL. Off unless a path is given.
+  bool start_recording(const std::string &path);
+  void stop_recording();
+  bool recording() const;
 
   void start();
   void stop();
@@ -166,6 +180,7 @@ private:
   void publish_frame(const Core::Position &pos, bool thinking);
   void publish_frame_current();
   void publish();
+  void record(const Snapshot &s);
   void apply_move_internal(Core::Move m);
   bool detect_terminal(bool hadLegalMove);
   void reset_game(bool randomOpening);
@@ -218,6 +233,12 @@ private:
   // whose position was replaced mid-flight discards its result.
   uint64_t boardGen_ = 0;
   bool publish_needed_ = false;
+  // Second net for side-by-side comparison, and the recorder.
+  std::unique_ptr<NNUE::Network> compareNet_;
+  std::string compareName_;
+  mutable std::mutex recMu_;
+  std::ofstream rec_;
+  std::string recPath_;
 };
 
 } // namespace Viz

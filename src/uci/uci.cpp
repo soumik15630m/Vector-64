@@ -25,7 +25,8 @@ namespace {
 using Clock = std::chrono::steady_clock;
 using Ms = std::chrono::milliseconds;
 
-constexpr int MAX_DEPTH = 64;
+// Nominal depth cap, kept a little under MAX_PLY so selective depth has room.
+constexpr int MAX_DEPTH = 246;
 constexpr const char *STANDARD_STARTPOS_FEN =
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 

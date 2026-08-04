@@ -16,7 +16,7 @@
 namespace Search {
 
 struct Limits {
-  int maxDepth = 64;
+  int maxDepth = 246;
   uint64_t maxNodes = 0;
   bool hasDeadline = false;
   std::chrono::steady_clock::time_point deadline{};

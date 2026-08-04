@@ -24,6 +24,10 @@ namespace Viz {
 // Serialize a snapshot into the framed binary message described above.
 std::string encode_state(const Snapshot &s);
 
+// One compact JSON line per frame for session recording: the numbers worth
+// keeping, without the multi-kilobyte activation buffers.
+std::string encode_record(const Snapshot &s);
+
 // Handle a control command (JSON object) against `session`.
 // Returns a JSON response body; `httpStatus` is set to 200 or 400.
 std::string handle_control(Session &session, const std::string &body,

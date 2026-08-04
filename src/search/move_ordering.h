@@ -7,7 +7,12 @@ namespace Search {
 
 class MoveOrdering {
 public:
-  static constexpr int MAX_PLY = 128;
+  // Hard ceiling on the search stack. Nominal depth is only the iterative
+  // deepening counter -- extensions and quiescence push individual lines much
+  // deeper, so this has to bound SELECTIVE depth, not nominal. Stockfish uses
+  // 246 for the same reason. At 2 bytes per Move the pv table costs ~129 KB
+  // per thread here, which buys room for research-depth searches.
+  static constexpr int MAX_PLY = 256;
 
   MoveOrdering();
 

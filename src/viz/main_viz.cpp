@@ -7,6 +7,7 @@
 #include "../cores/zobrist.h"
 #include "server.h"
 #include "session.h"
+#include "terminal.h"
 
 #ifdef STK_EMBED_NNUE
 #include "../nnue/embedded_net.h"
@@ -29,6 +30,9 @@ void usage() {
       "  --hash <mb>       transposition table size (default 32)\n"
       "  --delay <ms>      pause between self-play moves (default 300)\n"
       "  --seed <n>        self-play opening seed\n"
+      "  --net-b <file>    second net, evaluated alongside for comparison\n"
+      "  --record <file>   append every frame to a JSONL log\n"
+      "  --terminal        plain-text live view in the console, no browser\n"
       "  --no-browser      do not open a browser window\n"
       "  --headless        serve without opening a browser and exit on SIGINT\n"
       "  -h, --help        this message\n\n"
@@ -57,6 +61,9 @@ int main(int argc, char **argv) {
     Viz::Config cfg;
     Viz::ServerOptions opts;
     std::string netPath;
+    std::string netBPath;
+    std::string recordPath;
+    bool terminal = false;
 
     for (int i = 1; i < argc; ++i) {
       const std::string a = argv[i];
@@ -87,6 +94,17 @@ int main(int argc, char **argv) {
         if (i + 1 >= argc)
           return std::fprintf(stderr, "viz: --net needs a path\n"), 2;
         netPath = argv[++i];
+      } else if (a == "--net-b") {
+        if (i + 1 >= argc)
+          return std::fprintf(stderr, "viz: --net-b needs a path\n"), 2;
+        netBPath = argv[++i];
+      } else if (a == "--record") {
+        if (i + 1 >= argc)
+          return std::fprintf(stderr, "viz: --record needs a path\n"), 2;
+        recordPath = argv[++i];
+      } else if (a == "--terminal") {
+        terminal = true;
+        opts.openBrowser = false;
       } else if (a == "--no-browser" || a == "--headless") {
         opts.openBrowser = false;
       } else {
@@ -121,7 +139,19 @@ int main(int argc, char **argv) {
                    "viz: WARNING no net loaded -- the engine will use the "
                    "classical evaluation and there is nothing to visualize\n");
 
+    if (!netBPath.empty() && !session.load_compare_net(netBPath))
+      std::fprintf(stderr, "viz: could not load comparison net '%s'\n",
+                   netBPath.c_str());
+    if (!recordPath.empty()) {
+      if (session.start_recording(recordPath))
+        std::printf("viz: recording frames to %s\n", recordPath.c_str());
+      else
+        std::fprintf(stderr, "viz: cannot write '%s'\n", recordPath.c_str());
+    }
+
     session.start();
+    if (terminal)
+      return Viz::run_terminal(session);
     const int rc = Viz::run_server(session, opts);
     session.stop();
     return rc;

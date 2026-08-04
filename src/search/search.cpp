@@ -1152,6 +1152,14 @@ Result EngineSearch::search_internal(Core::Position &root, const Limits &limits,
       }
       if (stopped_)
         break;
+      // Each pass searches a smaller move set with its own window, so a later
+      // line can legitimately score higher than an earlier one (ordinary search
+      // instability). Every score here is exact, so ranking them is honest --
+      // and callers rely on best-first.
+      std::stable_sort(lines.begin(), lines.end(),
+                       [](const RootLine &a, const RootLine &b) {
+                         return a.scoreCp > b.scoreCp;
+                       });
       score = lines.empty() ? prevScore : lines[0].scoreCp;
       // Re-publish the best line's PV so the reporting below is consistent.
       if (!lines.empty()) {

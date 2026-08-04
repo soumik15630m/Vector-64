@@ -307,6 +307,10 @@ function BigBoard({
 
   const g = state.game;
   const stm = g.fen.split(" ")[1] === "b" ? -1 : 1;
+  // Frame eval converts with the frame's own side to move (it is the PV leaf).
+  const evalWhite = state.frame
+    ? state.frame.eval * (state.frame.sideToMove === 0 ? 1 : -1)
+    : state.search.scoreCp * stm;
   return (
     <div className="overlay" onClick={onClose}>
       <div className="board-sheet" onClick={(e) => e.stopPropagation()}>
@@ -321,12 +325,8 @@ function BigBoard({
             <div className="row">
               <span className="k">evaluation</span>
               <span className="v num">
-                {((state.frame?.eval ?? state.search.scoreCp) * stm) / 100 >= 0
-                  ? "+"
-                  : "−"}
-                {Math.abs(
-                  ((state.frame?.eval ?? state.search.scoreCp) * stm) / 100,
-                ).toFixed(2)}
+                {evalWhite >= 0 ? "+" : "−"}
+                {Math.abs(evalWhite / 100).toFixed(2)}
               </span>
             </div>
             <div className="row">

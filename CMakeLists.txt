@@ -187,6 +187,8 @@ add_library(chess_viz STATIC
         src/viz/session.h
         src/viz/wire.cpp
         src/viz/wire.h
+        src/viz/terminal.cpp
+        src/viz/terminal.h
 )
 target_link_libraries(chess_viz PUBLIC chess_core)
 

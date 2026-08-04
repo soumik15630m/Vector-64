@@ -3,6 +3,7 @@
 #include "../cores/movegen.h"
 #include "../datagen/selfplay.h"
 #include "../uci/uci_util.h"
+#include "wire.h"
 
 #include <algorithm>
 #include <chrono>
@@ -92,6 +93,48 @@ bool Session::load_net_buffer(const unsigned char *data, std::size_t size) {
   return ok;
 }
 
+bool Session::load_compare_net(const std::string &path) {
+  if (path.empty()) {
+    compareNet_.reset();
+    compareName_.clear();
+    publish();
+    return true;
+  }
+  auto net = std::make_unique<NNUE::Network>();
+  if (!net->load_file(path))
+    return false;
+  compareNet_ = std::move(net);
+  // Show the file name only; the full path is noise in a panel.
+  const size_t slash = path.find_last_of("/\\");
+  compareName_ = slash == std::string::npos ? path : path.substr(slash + 1);
+  publish();
+  return true;
+}
+
+bool Session::has_compare_net() const { return compareNet_ != nullptr; }
+
+bool Session::start_recording(const std::string &path) {
+  std::lock_guard<std::mutex> lk(recMu_);
+  rec_.close();
+  rec_.clear();
+  rec_.open(path, std::ios::out | std::ios::trunc);
+  if (!rec_)
+    return false;
+  recPath_ = path;
+  return true;
+}
+
+void Session::stop_recording() {
+  std::lock_guard<std::mutex> lk(recMu_);
+  rec_.close();
+  recPath_.clear();
+}
+
+bool Session::recording() const {
+  std::lock_guard<std::mutex> lk(recMu_);
+  return rec_.is_open();
+}
+
 void Session::start() {
   if (worker_.joinable())
     return;
@@ -137,7 +180,7 @@ void Session::set_move_delay(int ms) { moveDelayMs_.store(std::max(0, ms)); }
 
 void Session::set_nodes(int nodes) { nodes_.store(std::max(0, nodes)); }
 
-int Session::max_depth() { return 64; } // matches the UCI clamp
+int Session::max_depth() { return 246; } // matches the UCI clamp
 
 void Session::set_depth(int d) { depth_.store(std::clamp(d, 0, max_depth())); }
 
@@ -310,13 +353,37 @@ void Session::publish_frame(const Core::Position &pos, bool thinking) {
   VizFrame f;
   if (nnue)
     f = capture(pos, search_.evaluator().big(), cfg_.l1TopK);
-  std::lock_guard<std::mutex> lk(mu_);
-  snap_.nnueActive = nnue;
-  snap_.thinking = thinking;
-  if (nnue)
-    snap_.frame = std::move(f);
-  snap_.seq = ++seq_;
+  // The same position through the comparison net, so the two are directly
+  // comparable rather than being read from different moments.
+  VizFrame cf;
+  const bool cmp = compareNet_ != nullptr;
+  if (cmp)
+    cf = capture(pos, *compareNet_, cfg_.l1TopK);
+  Snapshot copy;
+  {
+    std::unique_lock<std::mutex> lk(mu_);
+    snap_.nnueActive = nnue;
+    snap_.thinking = thinking;
+    if (nnue)
+      snap_.frame = std::move(f);
+    snap_.compareActive = cmp;
+    snap_.compareName = compareName_;
+    if (cmp)
+      snap_.compareFrame = std::move(cf);
+    snap_.seq = ++seq_;
+    copy = snap_;
+  }
   cv_.notify_all();
+  // Written outside the snapshot lock: recording must never stall readers.
+  record(copy);
+}
+
+void Session::record(const Snapshot &s) {
+  std::lock_guard<std::mutex> lk(recMu_);
+  if (!rec_.is_open())
+    return;
+  rec_ << encode_record(s) << '\n';
+  rec_.flush(); // a crashed run should still leave a usable log
 }
 
 void Session::publish() {

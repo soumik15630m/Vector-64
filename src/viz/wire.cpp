@@ -106,6 +106,15 @@ std::string encode_state(const Snapshot &s) {
 
   h["legalMoves"] = s.legalMoves;
 
+  h["compare"] = s.compareActive
+                     ? json{{"active", true},
+                            {"name", s.compareName},
+                            {"eval", s.compareFrame.eval},
+                            {"psqt", s.compareFrame.psqt},
+                            {"positional", s.compareFrame.positional},
+                            {"bucket", s.compareFrame.bucket}}
+                     : json{{"active", false}};
+
   // Architecture constants, so the UI lays out the network from the engine's
   // own numbers instead of hard-coding them.
   h["arch"] = {{"hidden", NNUE::Network::HIDDEN},
@@ -164,6 +173,38 @@ std::string encode_state(const Snapshot &s) {
   return out;
 }
 
+std::string encode_record(const Snapshot &s) {
+  json j;
+  j["seq"] = s.seq;
+  j["mode"] = mode_name(s.mode);
+  j["gameIndex"] = s.game.gameIndex;
+  j["ply"] = s.game.ply;
+  j["fen"] = s.game.fen;
+  j["lastMove"] = s.game.lastMove;
+  j["result"] = s.game.result;
+  j["depth"] = s.search.depth;
+  j["seldepth"] = s.search.seldepth;
+  j["nodes"] = s.search.nodes;
+  j["nps"] = s.search.nps;
+  j["scoreCp"] = s.search.scoreCp;
+  j["pv"] = s.search.pv;
+  if (s.nnueActive) {
+    j["eval"] = s.frame.eval;
+    j["psqt"] = s.frame.psqt;
+    j["positional"] = s.frame.positional;
+    j["bucket"] = s.frame.bucket;
+  }
+  if (s.compareActive) {
+    j["compareEval"] = s.compareFrame.eval;
+    j["compareNet"] = s.compareName;
+  }
+  json cands = json::array();
+  for (const Candidate &c : s.search.candidates)
+    cands.push_back({{"move", c.move}, {"scoreCp", c.scoreCp}});
+  j["candidates"] = cands;
+  return j.dump();
+}
+
 std::string handle_control(Session &session, const std::string &body,
                            int &httpStatus) {
   httpStatus = 200;
@@ -201,6 +242,20 @@ std::string handle_control(Session &session, const std::string &body,
     session.set_threads(intVal(1));
   } else if (cmd == "depth") {
     session.set_depth(intVal(0));
+  } else if (cmd == "comparenet") {
+    const std::string path = j.contains("value") && j["value"].is_string()
+                                 ? j["value"].get<std::string>()
+                                 : std::string();
+    if (!session.load_compare_net(path))
+      return reject("could not load that net");
+  } else if (cmd == "record") {
+    const std::string path = j.contains("value") && j["value"].is_string()
+                                 ? j["value"].get<std::string>()
+                                 : std::string();
+    if (path.empty())
+      session.stop_recording();
+    else if (!session.start_recording(path))
+      return reject("could not open that file for writing");
   } else if (cmd == "randomopening") {
     session.set_random_opening(j.contains("value") && j["value"].is_boolean()
                                    ? j["value"].get<bool>()

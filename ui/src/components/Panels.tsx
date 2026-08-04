@@ -24,10 +24,14 @@ const signed = (x: number) => `${x > 0 ? "+" : ""}${x}`;
 export function EvalPanel({ s }: { s: EngineState }) {
   const f = s.frame;
   // Engine scores are side-to-move relative; show White's perspective so the
-  // bar does not flip meaning every ply.
-  const stm = s.game.fen.split(" ")[1] === "b" ? -1 : 1;
-  const cp = f ? f.eval : s.search.scoreCp;
-  const white = cp * stm;
+  // bar does not flip meaning every ply. The frame is captured at the PV LEAF,
+  // whose side to move often differs from the root's, so it must be converted
+  // with its own -- using the root's flips the sign and makes the evaluation
+  // disagree with the candidate list.
+  const rootStm = s.game.fen.split(" ")[1] === "b" ? -1 : 1;
+  const white = f
+    ? f.eval * (f.sideToMove === 0 ? 1 : -1)
+    : s.search.scoreCp * rootStm;
   const pct = 50 + 50 * Math.tanh(white / 400);
   const tone = white > 15 ? "pos" : white < -15 ? "neg" : undefined;
 
@@ -88,7 +92,7 @@ export function CandidatesPanel({
   const lo = Math.min(...scores);
   const hi = Math.max(...scores);
   const span = Math.max(1, hi - lo);
-  const stm = s.game.fen.split(" ")[1] === "b" ? -1 : 1;
+  const stm = s.game.fen.split(" ")[1] === "b" ? -1 : 1; // root scores
 
   return (
     <div className="panel">
