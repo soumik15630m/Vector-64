@@ -42,7 +42,15 @@ if(MSVC)
     endif()
 else()
     add_compile_options(-O3 -Wall -Wextra)
-    if(ENGINE_NATIVE)
+    if(EMSCRIPTEN)
+        # The browser build links with shared memory (pthreads), and wasm-ld
+        # refuses to mix objects built with the atomics feature and objects
+        # built without it -- so every translation unit needs these, not just
+        # the final link. -msimd128 lets the compiler vectorise the portable
+        # scalar NNUE kernels. Set here rather than via CXXFLAGS/-DCMAKE_CXX_FLAGS
+        # because emcmake re-invokes cmake and drops those.
+        add_compile_options(-pthread -msimd128)
+    elseif(ENGINE_NATIVE)
         add_compile_options(-march=native)
     endif()
     if(ENGINE_PGO STREQUAL "generate")

@@ -56,6 +56,15 @@ emcmake cmake -S "$ROOT" -B "$BUILD" \
   -DENGINE_LTO=OFF \
   -DENGINE_VIZ=OFF >/dev/null
 
+# The viz sources need nlohmann/json. The native configure already fetches it;
+# reuse that copy when present, otherwise pull the same pinned header.
+JSON_DIR="$(dirname "$(find "$ROOT" -name json.hpp -path '*_deps*' 2>/dev/null | head -1)")"
+if [ ! -f "$JSON_DIR/json.hpp" ]; then
+  JSON_DIR="$BUILD/third_party"
+  mkdir -p "$JSON_DIR"
+  curl -fsSL -o "$JSON_DIR/json.hpp"     https://raw.githubusercontent.com/nlohmann/json/v3.11.3/single_include/nlohmann/json.hpp
+fi
+
 echo "[wasm] building chess_core + viz telemetry"
 cmake --build "$BUILD" --target chess_core -j
 
@@ -68,11 +77,22 @@ em++ "${FLAGS[@]}" \
   "$ROOT/src/viz/wire.cpp" \
   "$ROOT/src/viz/wasm_bindings.cpp" \
   "$BUILD/libchess_core.a" \
-  -I "$(dirname "$(find "$BUILD/_deps" -name json.hpp | head -1)")" \
+  -I "$JSON_DIR" \
   -o "$OUT/stk-engine.js"
 
 cp "$NET" "$OUT/stk-vector-64.nnue"
 cp "$ROOT/ui/public/coi-serviceworker.js" "$OUT/"
+
+# Ship the UI beside the engine, with the COOP/COEP shim injected as the first
+# script so SharedArrayBuffer (and therefore pthreads) is available before the
+# engine module loads. Injected here rather than in ui/index.html so the native
+# build, which needs none of this, stays untouched.
+if [ -f "$ROOT/ui/dist/index.html" ]; then
+  sed 's|<head>|<head><script src="coi-serviceworker.js"></script>|'     "$ROOT/ui/dist/index.html" > "$OUT/index.html"
+  echo "[wasm] UI copied with the cross-origin-isolation shim"
+else
+  echo "[wasm] WARNING ui/dist/index.html missing -- run 'npm run build' in ui/"
+fi
 
 echo "[wasm] done -> $OUT"
 ls -la "$OUT"
