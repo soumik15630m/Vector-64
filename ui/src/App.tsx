@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { HttpEngineSource } from "./engine/httpSource";
-import type { ConnectionState } from "./engine/source";
+import { useEffect, useState } from "react";
+import { connect } from "./engine/connect";
+import type { BootProgress } from "./engine/connect";
+import type { ConnectionState, EngineSource } from "./engine/source";
 import type { ControlCommand, EngineState } from "./engine/types";
 import { Board } from "./components/Board";
 import { Controls } from "./components/Controls";
@@ -14,21 +15,37 @@ import {
 } from "./components/Panels";
 
 export default function App() {
-  // One transport-agnostic source. A WASM build swaps this line and nothing
-  // below it changes.
-  const source = useMemo(() => new HttpEngineSource(""), []);
+  // One transport-agnostic source: a local ChessEngine-viz if one is running,
+  // otherwise the WebAssembly build. Nothing below this line knows which.
+  const [source, setSource] = useState<EngineSource | null>(null);
+  const [boot, setBoot] = useState<BootProgress | null>(null);
   const [state, setState] = useState<EngineState | null>(null);
   const [conn, setConn] = useState<ConnectionState>("connecting");
   const [showNet, setShowNet] = useState(false);
 
   useEffect(() => {
+    let alive = true;
+    connect((p) => alive && setBoot(p))
+      .then((s) => {
+        if (!alive) return;
+        setSource(s);
+        setBoot(null);
+      })
+      .catch(() => alive && setConn("error"));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!source) return;
     const stop = source.subscribe((s) => {
       setState(s);
       setConn("live");
     });
     const t = setTimeout(
       () => setConn((c) => (c === "connecting" ? "error" : c)),
-      8000,
+      12000,
     );
     return () => {
       stop();
@@ -36,7 +53,11 @@ export default function App() {
     };
   }, [source]);
 
-  const send = (c: ControlCommand) => void source.send(c);
+  const send = (c: ControlCommand) => {
+    if (source) void source.send(c);
+  };
+
+  if (boot) return <BootScreen p={boot} />;
 
   return (
     <div className="app">
@@ -84,7 +105,7 @@ export default function App() {
       </div>
 
       <div className="col col-right">
-        {showNet ? (
+        {showNet && source ? (
           <NetInspector source={source} />
         ) : (
           state && (
@@ -102,7 +123,7 @@ export default function App() {
             className={`dot ${conn === "live" ? "live" : conn === "error" ? "err" : ""}`}
           />
           {conn === "live"
-            ? `live · ${source.label}`
+            ? `live · ${source?.label ?? ""}`
             : conn === "connecting"
               ? "connecting…"
               : "no engine — is ChessEngine-viz running?"}
@@ -115,6 +136,44 @@ export default function App() {
         )}
         <div style={{ flex: 1 }} />
         <span>every value shown is the engine's own output</span>
+      </div>
+    </div>
+  );
+}
+
+/** Shown while the WebAssembly engine and the real net are downloading. */
+function BootScreen({ p }: { p: BootProgress }) {
+  const pct = p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 0;
+  return (
+    <div
+      style={{
+        height: "100%",
+        display: "grid",
+        placeItems: "center",
+        gap: 14,
+      }}
+    >
+      <div style={{ width: 420, maxWidth: "80vw", textAlign: "center" }}>
+        <div className="brand" style={{ fontSize: 13, marginBottom: 18 }}>
+          STK<span>�</span>Vector-64 <span>/</span> Vector Scope
+        </div>
+        <div className="evalbar" style={{ height: 6 }}>
+          <div
+            className="fill"
+            style={{ left: 0, width: `${pct}%`, transition: "width .2s linear" }}
+          />
+        </div>
+        <div
+          className="num"
+          style={{ marginTop: 10, fontSize: 11, color: "var(--fg-dim)" }}
+        >
+          {p.phase === "net" ? "network" : "engine"} � {pct}%
+        </div>
+        {p.note && (
+          <div style={{ marginTop: 6, fontSize: 11, color: "var(--fg-faint)" }}>
+            {p.note}
+          </div>
+        )}
       </div>
     </div>
   );

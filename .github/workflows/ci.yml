@@ -254,6 +254,62 @@ jobs:
         if: runner.os == 'Windows'
         run: ctest --test-dir build -C Release --output-on-failure
 
+  # ---- visualizer ----
+  # The visualizer must (a) report the engine's real numbers and (b) never leak
+  # its dependencies into the binaries people actually play with.
+  viz:
+    name: viz · stream + dependency boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build engine + visualizer
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_NATIVE=OFF
+          cmake --build build --target ChessEngine ChessEngine-nnue ChessEngine-viz test_viz -j
+      - name: Telemetry is exact and the session drives legal games
+        run: |
+          ./build/bin/test_viz frame
+          ./build/bin/test_viz session
+      - name: Stream, control surface, security posture, eval cross-check
+        run: bash tools/viz_smoke.sh build/bin/ChessEngine-viz build/bin/ChessEngine-nnue
+      - name: Tournament binaries stay dependency-free
+        run: |
+          # The whole point of keeping chess_viz separate: no httplib, no json,
+          # no viz code in the engines used for real play.
+          for t in ChessEngine ChessEngine-nnue; do
+            if grep -qE 'chess_viz|httplib|nlohmann' "build/CMakeFiles/$t.dir/link.txt"; then
+              echo "$t picked up a visualizer dependency:"; cat "build/CMakeFiles/$t.dir/link.txt"; exit 1
+            fi
+          done
+          echo "ChessEngine and ChessEngine-nnue link chess_core only"
+
+  # The committed UI bundle is what gets embedded, so a stale one would ship a
+  # UI that does not match the sources.
+  viz-ui-bundle:
+    name: viz · ui bundle is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned to the major the committed bundle was produced with: bundler
+      # output is only reproducible for a fixed toolchain, and this job diffs
+      # the result byte for byte.
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+      - run: npm ci --no-audit --no-fund
+        working-directory: ui
+      - run: npm run typecheck
+        working-directory: ui
+      - name: Rebuild the bundle and diff it against the committed one
+        working-directory: ui
+        run: |
+          cp dist/index.html /tmp/committed.html
+          npm run build
+          if ! cmp -s dist/index.html /tmp/committed.html; then
+            echo "ui/dist/index.html is stale -- run 'npm run build' in ui/ and commit the result"
+            exit 1
+          fi
+          echo "bundle matches the sources"
+
   # ---- safety & style ----
   clang-format:
     name: lint · clang-format

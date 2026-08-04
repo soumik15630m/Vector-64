@@ -16,6 +16,7 @@ Production-grade C++20 chess engine focused on fast legal move generation, UCI s
 ## Architecture Targets
 
 - Current implementation notes: `docs/architecture.md`
+- NNUE live visualizer (Vector Scope): `docs/visualizer.md`
 - Production target profile: `docs/vector64-spec.md`
 
 ## Build

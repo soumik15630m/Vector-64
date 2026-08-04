@@ -68,3 +68,8 @@ runs/
 # bundle IS -- ChessEngine-viz embeds it, so a C++ build needs no Node.
 ui/node_modules/
 ui/.vite/
+ui/dist-wasm/
+# Only the single-file bundle is committed (it is what gets embedded); other
+# build artefacts in dist/ are copies of files already tracked in ui/public/.
+ui/dist/*
+!ui/dist/index.html
