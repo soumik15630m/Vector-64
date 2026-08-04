@@ -100,6 +100,9 @@ function describeCard(
             bestO >= 0 ? `L2 ${bestO} (${signed(bestV)})` : "—",
           ],
         ],
+        // Naming the move makes the chain concrete: this neuron is part of what
+        // produced that choice, not an isolated number.
+        line: pv[0] ? `feeds the choice of ${pv[0]}` : undefined,
         tone: drive > 0 ? "pos" : drive < 0 ? "neg" : undefined,
       };
     }
@@ -118,6 +121,7 @@ function describeCard(
           ["share of output", `${((Math.abs(c) / Math.max(1, total)) * 100).toFixed(1)}%`],
           ["effect", c > 0 ? "raises eval" : c < 0 ? "lowers eval" : "neutral"],
         ],
+        line: pv[0] ? `feeds the choice of ${pv[0]}` : undefined,
         tone: c > 0 ? "pos" : c < 0 ? "neg" : undefined,
       };
     }
@@ -211,6 +215,15 @@ export function NeuronField({
       r.destroy();
     };
   }, [onHover]);
+
+  // Esc releases a pinned node.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") rendererRef.current?.clearSelection();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -311,7 +324,7 @@ export function NeuronField({
         <span className="sep" />
         <span className="muted">width = |weight × activation|</span>
         <span className="sep" />
-        <span className="muted">hover to trace the forward path</span>
+        <span className="muted">click a neuron to pin it · esc to release</span>
       </div>
     </div>
   );

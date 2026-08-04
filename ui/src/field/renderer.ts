@@ -142,6 +142,7 @@ export class FieldRenderer {
   private arch?: Arch;
   private frame?: Frame;
   private hover: HoverTarget | null = null;
+  private selected: HoverTarget | null = null;
   private onHover?: (h: HoverTarget | null) => void;
   private w = 0;
   private h = 0;
@@ -169,6 +170,8 @@ export class FieldRenderer {
 
     canvas.addEventListener("pointermove", this.pointerMove);
     canvas.addEventListener("pointerleave", this.pointerLeave);
+    canvas.addEventListener("pointerdown", this.pointerDown);
+    canvas.style.cursor = "crosshair";
     this.ready = true;
   }
 
@@ -177,6 +180,7 @@ export class FieldRenderer {
     const c = this.app.canvas as HTMLCanvasElement;
     c.removeEventListener("pointermove", this.pointerMove);
     c.removeEventListener("pointerleave", this.pointerLeave);
+    c.removeEventListener("pointerdown", this.pointerDown);
     this.app.destroy(true, { children: true });
     this.ready = false;
   }
@@ -190,16 +194,45 @@ export class FieldRenderer {
         : hit === this.hover;
     if (same) return;
     this.hover = hit;
-    this.onHover?.(hit);
+    (this.app.canvas as HTMLCanvasElement).style.cursor = hit
+      ? "pointer"
+      : "crosshair";
+    if (!this.selected) this.onHover?.(hit);
     if (this.frame) this.drawEdges(this.frame);
   };
 
   private pointerLeave = () => {
     if (!this.hover) return;
     this.hover = null;
-    this.onHover?.(null);
+    if (!this.selected) this.onHover?.(null);
     if (this.frame) this.drawEdges(this.frame);
   };
+
+  /**
+   * Click to pin a node so its path stays put while you read the card, and to
+   * keep inspecting without holding the cursor perfectly still. Clicking the
+   * same node again, or empty space, releases it.
+   */
+  private pointerDown = (ev: PointerEvent) => {
+    const rect = (this.app.canvas as HTMLCanvasElement).getBoundingClientRect();
+    const hit = this.hitTest(ev.clientX - rect.left, ev.clientY - rect.top);
+    const isSame =
+      hit &&
+      this.selected &&
+      hit.layer === this.selected.layer &&
+      hit.index === this.selected.index;
+    this.selected = isSame ? null : hit;
+    this.onHover?.(this.selected ?? hit);
+    if (this.frame) this.drawEdges(this.frame);
+  };
+
+  /** Release any pinned node (Esc, or a mode change). */
+  clearSelection(): void {
+    if (!this.selected) return;
+    this.selected = null;
+    this.onHover?.(this.hover);
+    if (this.frame) this.drawEdges(this.frame);
+  }
 
   /** Grids are regular, so hit testing is arithmetic rather than a scan. */
   private hitTest(x: number, y: number): HoverTarget | null {
@@ -229,12 +262,12 @@ export class FieldRenderer {
     };
 
     return (
-      near(this.l1, "l1", 14) ??
-      near(this.l2, "l2", 11) ??
-      (this.out && Math.hypot(this.out.x - x, this.out.y - y) < 22
+      near(this.l1, "l1", 19) ??
+      near(this.l2, "l2", 15) ??
+      (this.out && Math.hypot(this.out.x - x, this.out.y - y) < 28
         ? { layer: "out" as HoverLayer, index: 0, x: this.out.x, y: this.out.y }
         : null) ??
-      near(this.squares, "square", 9) ??
+      near(this.squares, "square", 11) ??
       inBlock(this.accW, "accW") ??
       inBlock(this.accB, "accB") ??
       inBlock(this.pairW, "pairW") ??
@@ -478,7 +511,7 @@ export class FieldRenderer {
     hi.clear();
     if (!this.arch || !this.pairW || !this.pairB) return;
     const arch = this.arch;
-    const hov = this.hover;
+    const hov = this.selected ?? this.hover;
     const dim = hov ? 0.2 : 1;
 
     const whiteIsUs = f.sideToMove === 0;
@@ -691,8 +724,13 @@ export class FieldRenderer {
     }
 
     if (hov) {
+      const pinned = this.selected !== null;
       hi.circle(hov.x, hov.y, 13);
       hi.stroke({ width: 1.3, color: COL.accent, alpha: 0.95 });
+      if (pinned) {
+        hi.circle(hov.x, hov.y, 17);
+        hi.stroke({ width: 1, color: COL.accent, alpha: 0.5 });
+      }
     }
   }
 }
