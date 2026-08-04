@@ -1031,3 +1031,19 @@ input.numbox:focus {
   border-color: var(--accent-deep);
   box-shadow: 0 0 0 2px var(--accent-glow);
 }
+
+.resume-note {
+  margin-top: 9px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: rgba(255, 181, 69, 0.09);
+  border: 1px solid rgba(255, 181, 69, 0.28);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+}
+.resume-note b {
+  color: var(--pos);
+  font-family: var(--mono);
+  font-weight: 500;
+}

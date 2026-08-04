@@ -9,8 +9,10 @@
 #include <cstdint>
 #include <fstream>
 #include <mutex>
+#include <random>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // Session layer: owns an engine, drives it in one of the visualizer's modes,
@@ -24,7 +26,39 @@ namespace Viz {
 enum class Mode {
   SelfPlay, // engine plays itself continuously
   Analysis, // a position is set; the engine thinks about it
-  Human     // engine plays one side, the user the other
+  Human,    // engine plays one side, the user the other
+  Datagen   // self-play that writes labelled training positions
+};
+
+// Data generation settings. The rows written are produced by the SAME helpers
+// the CLI datagen uses (src/datagen/selfplay.h), so a dataset built here is
+// byte-compatible with one built by `ChessEngine datagen`.
+struct DatagenConfig {
+  std::string out; // output file; appended to when resuming
+  int64_t targetPositions = 1000000;
+  int nodes = 6000;
+  int skipPlies = 12; // opening plies to leave unlabelled
+  int maxPlies = 200;
+  int openingPlies = 8; // datagen always uses random balanced openings
+  int balance = 150;
+  double lam = 0.5;
+  bool raw = true; // raw = fen|eval|wdl; false = fen|blended cp
+  uint64_t seed = 12345;
+};
+
+// Live progress, and what a crashed run left behind.
+struct DatagenState {
+  bool running = false;
+  std::string out;
+  int64_t positions = 0;
+  int64_t games = 0;
+  int64_t target = 0;
+  int wins = 0, draws = 0, losses = 0;
+  double positionsPerSec = 0.0;
+  double etaMinutes = 0.0;
+  // A previous run's state file was found and can be continued.
+  bool resumable = false;
+  int64_t resumablePositions = 0;
 };
 
 const char *mode_name(Mode m);
@@ -110,6 +144,7 @@ struct Snapshot {
   VizFrame compareFrame;
   std::string compareName;
   std::vector<std::string> legalMoves; // side to move, for Human mode
+  DatagenState datagen;
 };
 
 class Session {
@@ -156,6 +191,14 @@ public:
   void set_engine_color(int color);
   void set_random_opening(bool v);
 
+  // Data generation. start_datagen switches to Datagen mode and begins writing;
+  // `resume` continues a previous run's file and counters instead of
+  // truncating.
+  bool start_datagen(const DatagenConfig &cfg, bool resume);
+  void stop_datagen();
+  // Inspect an output path for a recoverable previous run.
+  static DatagenState probe_datagen(const std::string &out);
+
   Snapshot snapshot() const;
   // Wait until the published sequence passes `have` (or `timeoutMs` elapses).
   Snapshot wait_for(uint64_t have, int timeoutMs) const;
@@ -173,6 +216,10 @@ private:
   void self_play_step();
   void analysis_step();
   void human_step();
+  void datagen_step();
+  void datagen_write(const std::vector<std::pair<std::string, int>> &rec,
+                     double wdl);
+  void datagen_save_state();
   // Search the current position, publishing per-iteration telemetry.
   // `ponder` runs one long search instead of a short budgeted one: it is the
   // engine thinking on the opponent's clock and ends when they move.
@@ -239,6 +286,17 @@ private:
   mutable std::mutex recMu_;
   std::ofstream rec_;
   std::string recPath_;
+
+  // --- data generation -------------------------------------------------
+  DatagenConfig dgCfg_;
+  std::ofstream dgOut_;
+  std::mutex dgMu_;
+  DatagenState dgState_;
+  std::chrono::steady_clock::time_point dgStart_{};
+  int64_t dgStartPositions_ = 0;
+  std::mt19937_64 dgRng_{12345};
+  // Rows for the game in progress; banked when it ends.
+  std::vector<std::pair<std::string, int>> dgRecord_;
 };
 
 } // namespace Viz

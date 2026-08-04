@@ -98,6 +98,10 @@ export function decodeState(buf: ArrayBuffer): EngineState {
     // offering a slider that runs to a made-up maximum.
     hardwareThreads: header.hardwareThreads ?? header.threads ?? 1,
     maxDepth: header.maxDepth ?? 64,
+    datagen: header.datagen ?? {
+      running: false, out: "", positions: 0, games: 0, target: 0,
+      wins: 0, draws: 0, losses: 0, positionsPerSec: 0, etaMinutes: 0,
+    },
     engineColor: header.engineColor,
     arch: header.arch,
     game: header.game,

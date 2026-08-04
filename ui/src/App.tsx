@@ -7,6 +7,7 @@ import { Board } from "./components/Board";
 import { Controls } from "./components/Controls";
 import { NeuronField } from "./components/NeuronField";
 import { NetInspector } from "./components/NetInspector";
+import { DatagenPanel } from "./components/Datagen";
 import {
   CandidatesPanel,
   ClockPanel,
@@ -101,6 +102,21 @@ export default function App() {
     if (source) void source.send(c);
   };
 
+  // Ask the engine whether an output file has a recoverable run behind it, so
+  // a crashed session is offered back instead of silently overwritten.
+  const probeDatagen = async (out: string) => {
+    const res = await fetch("/api/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cmd: "datagen", action: "probe", out }),
+    });
+    return (await res.json()) as {
+      resumable: boolean;
+      positions: number;
+      games: number;
+    };
+  };
+
   if (boot) return <BootScreen p={boot} />;
 
   return (
@@ -161,6 +177,9 @@ export default function App() {
           />
         </div>
         <div className="col-scroll">
+          {state && state.mode === "datagen" && (
+            <DatagenPanel s={state} send={send} probe={probeDatagen} />
+          )}
           {state && <ClockPanel s={state} />}
           {state && <EvalPanel s={state} />}
           {state && <CandidatesPanel s={state} onHover={setHoverMove} />}

@@ -69,6 +69,7 @@ const MODES: { id: Mode; label: string }[] = [
   { id: "selfplay", label: "self-play" },
   { id: "analysis", label: "analysis" },
   { id: "human", label: "play" },
+  { id: "datagen", label: "datagen" },
 ];
 
 export function Controls({ s, send }: Props) {
@@ -116,15 +117,21 @@ export function Controls({ s, send }: Props) {
   const [threads, setThreads] = useState(Math.min(s.threads, maxThreads));
   const [randomOpening, setRandomOpening] = useState(false);
 
+  // A dataset built from shifting settings is not one dataset, so everything
+  // that would change the data locks while generating. Pause, resume and stop
+  // stay live -- they are on the datagen panel.
+  const locked = s.datagen.running;
+
   return (
     <div className="panel">
-      <h3>Control</h3>
+      <h3>Control{locked && <i>locked while generating</i>}</h3>
 
       <div className="seg" style={{ marginBottom: 9 }}>
         {MODES.map((m) => (
           <button
             key={m.id}
             className={s.mode === m.id ? "on" : ""}
+            disabled={locked}
             onClick={() => send({ cmd: "mode", value: m.id })}
           >
             {m.label}
@@ -141,12 +148,17 @@ export function Controls({ s, send }: Props) {
         </button>
         <button
           className="btn"
-          disabled={!s.paused}
+          disabled={locked || !s.paused}
           onClick={() => send({ cmd: "step" })}
         >
           step
         </button>
-        <button className="btn" onClick={() => send({ cmd: "newgame" })}>
+        <button
+          className="btn"
+          disabled={locked}
+          title={locked ? "would discard the game being recorded" : undefined}
+          onClick={() => send({ cmd: "newgame" })}
+        >
           new game
         </button>
         {s.mode === "human" && (
@@ -185,6 +197,7 @@ export function Controls({ s, send }: Props) {
             min={0}
             max={2000}
             step={50}
+            disabled={locked}
             value={delay}
             onChange={(e) => {
               const v = Number(e.currentTarget.value);
@@ -202,6 +215,7 @@ export function Controls({ s, send }: Props) {
             min={0}
             max={NODE_STEPS.length - 1}
             step={1}
+            disabled={locked}
             value={nodeIdx}
             onChange={(e) => {
               const i = Number(e.currentTarget.value);
@@ -216,6 +230,7 @@ export function Controls({ s, send }: Props) {
             type="text"
             inputMode="numeric"
             value={nodeText}
+            disabled={locked}
             title="exact node budget; 0 = unlimited"
             onChange={(e) => setNodeText(e.currentTarget.value)}
             onBlur={() => commitNodes()}
@@ -234,6 +249,7 @@ export function Controls({ s, send }: Props) {
             min={0}
             max={s.maxDepth}
             step={1}
+            disabled={locked}
             value={Math.min(depth, s.maxDepth)}
             onChange={(e) => {
               const v = Math.min(
@@ -250,6 +266,7 @@ export function Controls({ s, send }: Props) {
             type="text"
             inputMode="numeric"
             value={depthText}
+            disabled={locked}
             title={`exact depth; 0 = no cap, engine maximum ${s.maxDepth}`}
             onChange={(e) => setDepthText(e.currentTarget.value)}
             onBlur={() => commitDepth()}
@@ -270,7 +287,7 @@ export function Controls({ s, send }: Props) {
           min={1}
           max={maxThreads}
           step={1}
-          disabled={maxThreads === 1}
+          disabled={locked || maxThreads === 1}
           value={Math.min(threads, maxThreads)}
           onChange={(e) => {
             const v = Math.min(

@@ -99,7 +99,33 @@ export interface Frame {
   blackFeatures: ActiveFeature[];
 }
 
-export type Mode = "selfplay" | "analysis" | "human";
+export type Mode = "selfplay" | "analysis" | "human" | "datagen";
+
+/** Live data-generation progress, and what a crashed run left recoverable. */
+export interface DatagenState {
+  running: boolean;
+  out: string;
+  positions: number;
+  games: number;
+  target: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  positionsPerSec: number;
+  etaMinutes: number;
+}
+
+export interface DatagenOptions {
+  out: string;
+  targetPositions: number;
+  nodes: number;
+  emit: "raw" | "blend";
+  lam?: number;
+  skipPlies?: number;
+  maxPlies?: number;
+  seed?: number;
+  resume?: boolean;
+}
 
 export interface EngineState {
   seq: number;
@@ -119,6 +145,7 @@ export interface EngineState {
   search: SearchInfo;
   legalMoves: string[];
   frame: Frame | null;
+  datagen: DatagenState;
 }
 
 export type ControlCommand =
@@ -130,6 +157,8 @@ export type ControlCommand =
   | { cmd: "threads"; value: number }
   | { cmd: "randomopening"; value: boolean }
   | { cmd: "depth"; value: number }
+  | ({ cmd: "datagen"; action: "start" } & DatagenOptions)
+  | { cmd: "datagen"; action: "stop" }
   | { cmd: "enginecolor"; value: number }
   | { cmd: "mode"; value: Mode }
   | { cmd: "position"; fen: string; moves: string[] }

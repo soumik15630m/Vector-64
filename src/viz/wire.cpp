@@ -106,6 +106,17 @@ std::string encode_state(const Snapshot &s) {
 
   h["legalMoves"] = s.legalMoves;
 
+  h["datagen"] = {{"running", s.datagen.running},
+                  {"out", s.datagen.out},
+                  {"positions", s.datagen.positions},
+                  {"games", s.datagen.games},
+                  {"target", s.datagen.target},
+                  {"wins", s.datagen.wins},
+                  {"draws", s.datagen.draws},
+                  {"losses", s.datagen.losses},
+                  {"positionsPerSec", s.datagen.positionsPerSec},
+                  {"etaMinutes", s.datagen.etaMinutes}};
+
   h["compare"] = s.compareActive
                      ? json{{"active", true},
                             {"name", s.compareName},
@@ -248,6 +259,48 @@ std::string handle_control(Session &session, const std::string &body,
                                  : std::string();
     if (!session.load_compare_net(path))
       return reject("could not load that net");
+  } else if (cmd == "datagen") {
+    // start / stop / probe. Everything else about the run is fixed once it is
+    // going, so a dataset cannot be built from shifting settings.
+    const std::string action = j.contains("action") && j["action"].is_string()
+                                   ? j["action"].get<std::string>()
+                                   : std::string("start");
+    const std::string out = j.contains("out") && j["out"].is_string()
+                                ? j["out"].get<std::string>()
+                                : std::string();
+    if (action == "stop") {
+      session.stop_datagen();
+    } else if (action == "probe") {
+      const DatagenState st = Session::probe_datagen(out);
+      return json{{"ok", true},
+                  {"resumable", st.resumable},
+                  {"positions", st.resumablePositions},
+                  {"games", st.games}}
+          .dump();
+    } else {
+      DatagenConfig dg;
+      dg.out = out;
+      const auto num = [&](const char *k, auto def) {
+        return j.contains(k) && j[k].is_number() ? j[k].get<decltype(def)>()
+                                                 : def;
+      };
+      dg.targetPositions = num("targetPositions", int64_t{1000000});
+      dg.nodes = num("nodes", int{6000});
+      dg.skipPlies = num("skipPlies", int{12});
+      dg.maxPlies = num("maxPlies", int{200});
+      dg.openingPlies = num("openingPlies", int{8});
+      dg.balance = num("balance", int{150});
+      dg.lam = num("lam", double{0.5});
+      dg.seed = static_cast<uint64_t>(num("seed", int{12345}));
+      dg.raw = !(j.contains("emit") && j["emit"].is_string() &&
+                 j["emit"].get<std::string>() == "blend");
+      const bool resume = j.contains("resume") && j["resume"].is_boolean() &&
+                          j["resume"].get<bool>();
+      if (dg.out.empty())
+        return reject("datagen needs an output path");
+      if (!session.start_datagen(dg, resume))
+        return reject("could not open that output file");
+    }
   } else if (cmd == "record") {
     const std::string path = j.contains("value") && j["value"].is_string()
                                  ? j["value"].get<std::string>()

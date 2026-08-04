@@ -2,8 +2,11 @@
 
 #include "../cores/movegen.h"
 #include "../datagen/selfplay.h"
+
 #include "../uci/uci_util.h"
 #include "wire.h"
+#include <cstdlib>
+#include <iterator>
 
 #include <algorithm>
 #include <chrono>
@@ -44,6 +47,8 @@ const char *mode_name(Mode m) {
     return "analysis";
   case Mode::Human:
     return "human";
+  case Mode::Datagen:
+    return "datagen";
   }
   return "selfplay";
 }
@@ -59,6 +64,10 @@ bool mode_from_name(const std::string &s, Mode &out) {
   }
   if (s == "human") {
     out = Mode::Human;
+    return true;
+  }
+  if (s == "datagen") {
+    out = Mode::Datagen;
     return true;
   }
   return false;
@@ -197,6 +206,134 @@ void Session::set_threads(int n) {
   threads_.store(std::clamp(n, 1, hardware_threads()));
   abortSearch_.store(true); // take effect on the next search, not this one
   cv_.notify_all();
+}
+
+namespace {
+// The state file sits beside the dataset so a resumed run finds it without
+// being told where it is.
+std::string state_path_for(const std::string &out) {
+  return out + ".state.json";
+}
+} // namespace
+
+DatagenState Session::probe_datagen(const std::string &out) {
+  DatagenState st;
+  st.out = out;
+  std::ifstream in(state_path_for(out));
+  if (!in)
+    return st;
+  // Deliberately a tiny hand-parse: the file is ours and has four integers.
+  std::string body((std::istreambuf_iterator<char>(in)),
+                   std::istreambuf_iterator<char>());
+  const auto grab = [&](const char *key) -> int64_t {
+    const size_t k = body.find(key);
+    if (k == std::string::npos)
+      return 0;
+    const size_t c = body.find(':', k);
+    return c == std::string::npos
+               ? 0
+               : std::strtoll(body.c_str() + c + 1, nullptr, 10);
+  };
+  st.resumablePositions = grab("\"positions\"");
+  st.games = grab("\"games\"");
+  st.resumable = st.resumablePositions > 0 || st.games > 0;
+  return st;
+}
+
+bool Session::start_datagen(const DatagenConfig &cfg, bool resume) {
+  if (cfg.out.empty())
+    return false;
+  {
+    std::lock_guard<std::mutex> lk(dgMu_);
+    dgOut_.close();
+    dgOut_.clear();
+    // Resuming appends to the existing dataset; a fresh run truncates it, so a
+    // restart cannot silently double-count rows already on disk.
+    dgOut_.open(cfg.out,
+                std::ios::binary | (resume ? std::ios::app : std::ios::trunc));
+    if (!dgOut_)
+      return false;
+    dgCfg_ = cfg;
+    dgState_ = DatagenState{};
+    dgState_.out = cfg.out;
+    dgState_.target = cfg.targetPositions;
+    if (resume) {
+      const DatagenState prev = probe_datagen(cfg.out);
+      dgState_.positions = prev.resumablePositions;
+      dgState_.games = prev.games;
+    }
+    dgState_.running = true;
+    dgStartPositions_ = dgState_.positions;
+    dgStart_ = std::chrono::steady_clock::now();
+    // Offset the seed by the work already done so a resumed run does not
+    // regenerate the same games it already has.
+    dgRng_.seed(cfg.seed + 0x9E3779B97F4A7C15ULL *
+                               static_cast<uint64_t>(dgState_.games + 1));
+  }
+  {
+    std::lock_guard<std::mutex> lk(cmdMu_);
+    mode_ = Mode::Datagen;
+    pendingReset_ = true;
+    pendingRandomOpening_ = true; // datagen always wants varied openings
+    ++boardGen_;
+  }
+  paused_.store(false);
+  abortSearch_.store(true);
+  publish();
+  return true;
+}
+
+void Session::stop_datagen() {
+  std::lock_guard<std::mutex> lk(dgMu_);
+  if (dgOut_.is_open()) {
+    dgOut_.flush();
+    dgOut_.close();
+  }
+  dgState_.running = false;
+}
+
+void Session::datagen_save_state() {
+  // Written after every game so a crash loses at most one game's worth.
+  std::ofstream st(state_path_for(dgCfg_.out), std::ios::trunc);
+  if (!st)
+    return;
+  st << "{\n  \"positions\": " << dgState_.positions
+     << ",\n  \"games\": " << dgState_.games
+     << ",\n  \"target\": " << dgState_.target
+     << ",\n  \"nodes\": " << dgCfg_.nodes << "\n}\n";
+}
+
+void Session::datagen_write(const std::vector<std::pair<std::string, int>> &rec,
+                            double wdl) {
+  std::lock_guard<std::mutex> lk(dgMu_);
+  if (!dgOut_.is_open())
+    return;
+  for (const auto &pr : rec)
+    dgOut_ << Datagen::emit_row(pr.first, pr.second, wdl, dgCfg_.raw,
+                                dgCfg_.lam)
+           << '\n';
+  dgOut_.flush();
+  dgState_.positions += static_cast<int64_t>(rec.size());
+  ++dgState_.games;
+  if (wdl == 1.0)
+    ++dgState_.wins;
+  else if (wdl == 0.0)
+    ++dgState_.losses;
+  else
+    ++dgState_.draws;
+
+  const double el =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - dgStart_)
+          .count();
+  const double made =
+      static_cast<double>(dgState_.positions - dgStartPositions_);
+  dgState_.positionsPerSec = el > 0 ? made / el : 0.0;
+  const double remain =
+      static_cast<double>(dgState_.target - dgState_.positions);
+  dgState_.etaMinutes = dgState_.positionsPerSec > 0
+                            ? remain / dgState_.positionsPerSec / 60.0
+                            : 0.0;
+  datagen_save_state();
 }
 
 void Session::set_random_opening(bool v) {
@@ -421,7 +558,13 @@ void Session::publish() {
     m = mode_;
     ec = engineColor_;
   }
+  DatagenState dg;
+  {
+    std::lock_guard<std::mutex> lk(dgMu_);
+    dg = dgState_;
+  }
   std::lock_guard<std::mutex> lk(mu_);
+  snap_.datagen = dg;
   snap_.game = std::move(g);
   snap_.legalMoves = std::move(legalNow);
   snap_.mode = m;
@@ -657,6 +800,78 @@ void Session::human_step() {
   publish();
 }
 
+// One datagen game, played move by move so the UI can watch it, but labelled
+// exactly the way the CLI datagen labels: the same skip-plies rule, the same
+// clamp, the same row format, and the same cheap terminal detection.
+void Session::datagen_step() {
+  {
+    std::lock_guard<std::mutex> lk(dgMu_);
+    if (!dgState_.running)
+      return;
+    if (dgState_.positions >= dgState_.target) {
+      dgState_.running = false;
+      if (dgOut_.is_open()) {
+        dgOut_.flush();
+        dgOut_.close();
+      }
+      publish_needed_ = true;
+      return;
+    }
+  }
+
+  // Terminal? Bank the game's rows and start the next one.
+  bool finished = false;
+  {
+    std::lock_guard<std::mutex> lk(cmdMu_);
+    finished = gameOver_ || detect_terminal(has_legal_move(pos_));
+  }
+  if (finished) {
+    double wdl = 0.5;
+    std::vector<std::pair<std::string, int>> rec;
+    {
+      std::lock_guard<std::mutex> lk(cmdMu_);
+      if (result_ == "1-0")
+        wdl = 1.0;
+      else if (result_ == "0-1")
+        wdl = 0.0;
+      rec.swap(dgRecord_);
+      if (result_ == "1-0")
+        ++wins_;
+      else if (result_ == "0-1")
+        ++losses_;
+      else
+        ++draws_;
+      reset_game(true);
+    }
+    datagen_write(rec, wdl);
+    publish();
+    return;
+  }
+
+  const Search::Result r = think();
+  abortSearch_.store(false);
+  if (!r.bestMove.is_ok()) {
+    publish();
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lk(cmdMu_);
+    // Skip the opening plies and any position in check, exactly as the CLI
+    // generator does -- those labels are noise.
+    const int ply = static_cast<int>(moves_.size());
+    if (ply >= dgCfg_.skipPlies && !pos_.in_check()) {
+      const int evalWhite =
+          pos_.side_to_move() == Core::WHITE ? r.scoreCp : -r.scoreCp;
+      dgRecord_.emplace_back(pos_.toFEN(), Datagen::clamp_score(evalWhite));
+    }
+    apply_move_internal(r.bestMove);
+    if (static_cast<int>(moves_.size()) >= dgCfg_.maxPlies)
+      gameOver_ = true, result_ = "1/2-1/2", reason_ = "maxplies";
+  }
+  publish_frame_current();
+  publish();
+}
+
 void Session::publish_frame_current() {
   Core::Position p;
   {
@@ -705,6 +920,9 @@ void Session::run() {
       break;
     case Mode::Human:
       human_step();
+      break;
+    case Mode::Datagen:
+      datagen_step();
       break;
     }
 

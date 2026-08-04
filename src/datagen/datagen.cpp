@@ -29,8 +29,6 @@
 namespace Datagen {
 namespace {
 
-constexpr int MATE_CP = 8000;
-
 struct Params {
   std::string net;
   std::string out;
@@ -48,26 +46,9 @@ struct Params {
   double logInterval = 30.0;
 };
 
-// Search score -> a bounded white-perspective label; mates map to +/-MATE_CP
-// (mirrors tools/nnue/datagen.py so the two generators agree).
-int clamp_score(int cp) {
-  if (Search::is_mate_score(cp))
-    return cp > 0 ? MATE_CP : -MATE_CP;
-  return std::max(-MATE_CP, std::min(MATE_CP, cp));
-}
-
-// WDL blend in win-probability space (matches datagen.py blend_cp, CP_SCALE
-// 400).
-int blend_cp(int evalWhite, double wdl, double lam) {
-  const double e = std::max(-4000.0, std::min(4000.0, double(evalWhite)));
-  const double pe = 1.0 / (1.0 + std::exp(-e / 400.0));
-  double p = (1.0 - lam) * pe + lam * wdl;
-  p = std::min(std::max(p, 1e-4), 1.0 - 1e-4);
-  return int(std::lround(400.0 * std::log(p / (1.0 - p))));
-}
-
-// START_FEN, insufficient_material and make_opening now live in selfplay.h,
-// shared with the visualizer's self-play mode.
+// START_FEN, MATE_CP, clamp_score, blend_cp, emit_row, insufficient_material
+// and make_opening all live in selfplay.h now, shared verbatim with the
+// visualizer's datagen mode so the two write identical rows.
 
 struct Shared {
   std::ofstream out;
@@ -141,15 +122,8 @@ void worker(const Params &p, Shared &sh) {
       ++plies;
     }
 
-    const char *ws = wdl == 1.0 ? "1.0" : (wdl == 0.0 ? "0.0" : "0.5");
-    for (const auto &pr : rec) {
-      if (p.raw)
-        buf.push_back(pr.first + " | " + std::to_string(pr.second) + " | " +
-                      ws);
-      else
-        buf.push_back(pr.first + " | " +
-                      std::to_string(blend_cp(pr.second, wdl, p.lam)));
-    }
+    for (const auto &pr : rec)
+      buf.push_back(emit_row(pr.first, pr.second, wdl, p.raw, p.lam));
     sh.games.fetch_add(1);
     (wdl == 1.0 ? sh.w : (wdl == 0.0 ? sh.l : sh.d)).fetch_add(1);
     if (buf.size() >= 2000)
