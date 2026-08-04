@@ -1,0 +1,25 @@
+/* Embeds the visualizer's single-file UI bundle into the binary via GNU-as
+   `.incbin`. CMake generates embedded_ui.S from this template
+   (configure_file), substituting the absolute bundle path. Mirrors
+   src/nnue/embedded_net.S.in: the .S extension runs the C preprocessor, so one
+   file covers Mach-O (macOS: __TEXT,__const + leading-underscore symbols) and
+   ELF / PE-COFF (Linux, MinGW: .rodata, no underscore). MSVC uses an RCDATA
+   resource instead (embedded_ui.rc). The two labels bracket the bundle;
+   embedded_ui.cpp computes the size from their difference. */
+#if defined(__APPLE__)
+    .section __TEXT,__const
+    .p2align 4
+    .globl _stk_embedded_ui_data
+_stk_embedded_ui_data:
+    .incbin "@STK_EMBED_UI_PATH@"
+    .globl _stk_embedded_ui_end
+_stk_embedded_ui_end:
+#else
+    .section .rodata
+    .balign 16
+    .global stk_embedded_ui_data
+stk_embedded_ui_data:
+    .incbin "@STK_EMBED_UI_PATH@"
+    .global stk_embedded_ui_end
+stk_embedded_ui_end:
+#endif

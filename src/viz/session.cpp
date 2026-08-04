@@ -113,6 +113,7 @@ void Session::set_mode(Mode m) {
     ++boardGen_;
   }
   abortSearch_.store(true);
+  publish();
 }
 
 void Session::set_paused(bool p) {
@@ -132,8 +133,11 @@ void Session::set_move_delay(int ms) { moveDelayMs_.store(std::max(0, ms)); }
 void Session::set_nodes(int nodes) { nodes_.store(std::max(1, nodes)); }
 
 void Session::set_engine_color(int color) {
-  std::lock_guard<std::mutex> lk(cmdMu_);
-  engineColor_ = color ? 1 : 0;
+  {
+    std::lock_guard<std::mutex> lk(cmdMu_);
+    engineColor_ = color ? 1 : 0;
+  }
+  publish();
 }
 
 void Session::new_game() {
@@ -144,6 +148,7 @@ void Session::new_game() {
     ++boardGen_;
   }
   abortSearch_.store(true);
+  publish();
 }
 
 bool Session::set_position(const std::string &fen,
@@ -177,6 +182,7 @@ bool Session::set_position(const std::string &fen,
   }
   abortSearch_.store(true);
   refresh_legal_moves();
+  publish();
   return true;
 }
 
@@ -193,6 +199,7 @@ bool Session::play_move(const std::string &uci) {
   }
   abortSearch_.store(true);
   refresh_legal_moves();
+  publish();
   return true;
 }
 

@@ -117,6 +117,10 @@ public:
   // Wait until the published sequence passes `have` (or `timeoutMs` elapses).
   Snapshot wait_for(uint64_t have, int timeoutMs) const;
 
+  // The net the engine is using, for the inspector. Weights are immutable once
+  // loaded, so this is safe to read while the worker searches.
+  const NNUE::Network &net() const { return search_.evaluator().big(); }
+
 private:
   void run();
   void self_play_step();

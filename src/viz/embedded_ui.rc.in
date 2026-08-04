@@ -1,0 +1,5 @@
+// Windows resource script (MSVC): embeds the visualizer UI bundle as an RCDATA
+// blob reached via FindResourceW(L"STK_EMBEDDED_UI", RT_RCDATA) in
+// embedded_ui.cpp. CMake substitutes the absolute bundle path
+// (configure_file). rc.exe accepts a forward-slash path.
+STK_EMBEDDED_UI RCDATA "@STK_EMBED_UI_PATH@"
