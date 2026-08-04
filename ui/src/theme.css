@@ -10,14 +10,16 @@
 :root {
   --bg: #05070b;
   --bg-2: #080b11;
-  --panel: #0b1018;
-  --panel-2: #111827;
+  --panel: #0d131d;
+  --panel-2: #141d2b;
   --line: #1a2333;
   --line-soft: #131b27;
 
-  --fg: #eaf0f8;
-  --fg-dim: #96a7be;
-  --fg-faint: #5b6a80;
+  /* Contrast targets on --panel (#0b1018): fg ~15:1, dim ~9:1, faint ~5.5:1.
+     The previous dim/faint pair sat near 3:1 and was genuinely hard to read. */
+  --fg: #f3f7fc;
+  --fg-dim: #bccbdd;
+  --fg-faint: #8b9db5;
 
   --accent: #4dd8ff;
   --accent-deep: #12556b;
@@ -105,7 +107,7 @@ body {
 
 .chip {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--fg-dim);
   background: var(--bg-2);
@@ -185,11 +187,11 @@ body {
 
 .panel h3 {
   margin: 0 0 9px;
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--fg-faint);
+  color: var(--fg-dim);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -213,12 +215,12 @@ body {
 }
 .row .k {
   color: var(--fg-dim);
-  font-size: 11.5px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .row .v {
   color: var(--fg);
-  font-size: 11.5px;
+  font-size: 12px;
   text-align: right;
   white-space: nowrap;
 }
@@ -235,8 +237,8 @@ body {
   align-items: center;
   gap: 16px;
   padding: 0 14px;
-  font-size: 10.5px;
-  color: var(--fg-faint);
+  font-size: 11px;
+  color: var(--fg-dim);
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--r);
@@ -337,10 +339,10 @@ button.btn:disabled {
 }
 label.lbl {
   display: block;
-  font-size: 10px;
+  font-size: 10.5px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--fg-faint);
+  color: var(--fg-dim);
   margin-bottom: 3px;
 }
 label.lbl b {
@@ -424,7 +426,7 @@ input[type="text"]:focus {
 /* --- lists: fixed height, scroll inside -------------------------------- */
 .moves {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.8;
   height: 118px; /* fixed: the panel must not grow with the game */
   overflow-y: auto;
@@ -442,7 +444,7 @@ input[type="text"]:focus {
 }
 .pv {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.65;
   height: 46px; /* fixed for the same reason */
   overflow-y: auto;
@@ -477,14 +479,14 @@ input[type="text"]:focus {
 
 .field-labels > div {
   position: absolute;
-  top: 12px;
+  top: 11px;
   transform: translateX(-50%);
   text-align: center;
   font-family: var(--mono);
   font-size: 9px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--fg-faint);
+  color: var(--fg-dim);
   white-space: nowrap;
   line-height: 1.5;
   pointer-events: none;
@@ -492,9 +494,9 @@ input[type="text"]:focus {
 .field-labels em {
   display: block;
   font-style: normal;
-  font-size: 8px;
+  font-size: 9px;
   letter-spacing: 0.06em;
-  opacity: 0.55;
+  color: var(--fg-faint);
 }
 
 .field-tip {
@@ -521,7 +523,7 @@ input[type="text"]:focus {
   display: flex;
   justify-content: space-between;
   gap: 14px;
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--fg-dim);
   padding: 1.5px 0;
 }
@@ -536,22 +538,90 @@ input[type="text"]:focus {
   bottom: 11px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 9.5px;
-  color: var(--fg-faint);
+  gap: 10px;
+  font-size: 10.5px;
+  color: var(--fg-dim);
   font-family: var(--mono);
   pointer-events: none;
+  background: rgba(6, 9, 14, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 11px;
+  backdrop-filter: blur(4px);
 }
-.field-legend .ramp {
-  width: 84px;
+.field-legend .key {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.field-legend .sw {
+  width: 16px;
   height: 5px;
   border-radius: 3px;
-  background: linear-gradient(90deg, var(--neg), #151d2b 50%, var(--pos));
+  flex: none;
+}
+.field-legend .sw.neg {
+  background: var(--neg);
+}
+.field-legend .sw.pos {
+  background: var(--pos);
 }
 .field-legend .sep {
   width: 1px;
-  height: 10px;
+  height: 12px;
   background: var(--line);
+}
+.field-legend .muted {
+  color: var(--fg-faint);
+}
+
+/* The engine's current choice, parked beside the output node. */
+.decision {
+  position: absolute;
+  z-index: 4;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 132px;
+  background: rgba(6, 9, 14, 0.86);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.decision h5 {
+  margin: 0 0 5px;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  font-weight: 600;
+}
+.decision .mv {
+  font-family: var(--mono);
+  font-size: 21px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  line-height: 1.15;
+}
+.decision .sub {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-dim);
+  margin-top: 3px;
+}
+.decision .line {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-faint);
+  margin-top: 6px;
+  max-width: 168px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .field-empty {
   position: absolute;
@@ -582,8 +652,8 @@ input[type="text"]:focus {
 .axis {
   display: flex;
   justify-content: space-between;
-  font-size: 9.5px;
-  color: var(--fg-faint);
+  font-size: 10.5px;
+  color: var(--fg-dim);
   margin-top: 5px;
 }
 
@@ -597,9 +667,13 @@ input[type="text"]:focus {
   aspect-ratio: 1;
   display: grid;
   place-items: center;
-  font-size: 8px;
+  font-size: 9.5px;
   border-radius: 3px;
   font-family: var(--mono);
+  /* Light text on a dark teal ramp at every step. The old ramp ran to bright
+     cyan and flipped the text colour mid-way, so the middle buckets had almost
+     no contrast either way. */
+  color: var(--fg);
   transition: all 0.3s var(--ease);
 }
 .kb-grid div.king-w {

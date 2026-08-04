@@ -132,8 +132,11 @@ export function NetInspector({
                   e?.mirror ? " (mirrored)" : ""
                 }`}
                 style={{
-                  color: t > 0.55 ? "#05070b" : "var(--fg-faint)",
-                  background: `color-mix(in srgb, var(--accent) ${t * 88}%, var(--panel-2))`,
+                  // Ramp toward a DARK teal, never toward bright cyan, so the
+                  // label stays light-on-dark at every step. The old ramp went
+                  // pale in the middle and flipped the text colour, leaving the
+                  // mid buckets nearly unreadable either way.
+                  background: `color-mix(in srgb, var(--accent-deep) ${18 + t * 82}%, var(--panel-2))`,
                 }}
               >
                 {e?.bucket ?? ""}

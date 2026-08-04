@@ -7,6 +7,10 @@ interface Props {
   frame: Frame | null;
   arch: Arch | null;
   nnueActive: boolean;
+  /** The engine's current principal variation; pv[0] is the move it will play. */
+  pv: string[];
+  depth: number;
+  thinking: boolean;
 }
 
 // x is the centre of each column, matching FieldRenderer.layout().
@@ -106,7 +110,14 @@ function describe(
   }
 }
 
-export function NeuronField({ frame, arch, nnueActive }: Props) {
+export function NeuronField({
+  frame,
+  arch,
+  nnueActive,
+  pv,
+  depth,
+  thinking,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<FieldRenderer | null>(null);
@@ -195,14 +206,34 @@ export function NeuronField({ frame, arch, nnueActive }: Props) {
         </div>
       )}
 
+      {/* What the engine is choosing, parked at the end of the forward pass. */}
+      {pv.length > 0 && (
+        <div className="decision">
+          <h5>{thinking ? "currently choosing" : "engine plays"}</h5>
+          <div className="mv">{pv[0]}</div>
+          <div className="sub">
+            {frame
+              ? `${frame.eval > 0 ? "+" : ""}${(frame.eval / 100).toFixed(2)} · depth ${depth}`
+              : `depth ${depth}`}
+          </div>
+          {pv.length > 1 && <div className="line">{pv.join(" ")}</div>}
+        </div>
+      )}
+
+      {/* The two-colour scheme is only readable if it is named. */}
       <div className="field-legend">
-        <span>−</span>
-        <span className="ramp" />
-        <span>+</span>
+        <span className="key">
+          <span className="sw neg" /> negative
+        </span>
+        <span className="key">
+          <span className="sw pos" /> positive
+        </span>
         <span className="sep" />
-        <span>edge width = |weight × activation|</span>
+        <span className="muted">cells = value · edges = effect on eval</span>
         <span className="sep" />
-        <span>hover a neuron to trace its path</span>
+        <span className="muted">width = |weight × activation|</span>
+        <span className="sep" />
+        <span className="muted">hover to trace the forward path</span>
       </div>
     </div>
   );

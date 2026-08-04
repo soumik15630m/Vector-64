@@ -462,10 +462,14 @@ export class FieldRenderer {
   }
 
   /**
-   * Edges come from attribution, not topology: for each L1 neuron only its
-   * strongest inputs are drawn, and every downstream edge scales with
-   * |weight x activation|. When something is hovered, its own path is drawn
-   * bright and everything else recedes.
+   * Edges come from attribution, not topology: every edge's width and opacity
+   * scale with |weight x activation|.
+   *
+   * Hovering traces the signal FORWARD to the evaluation. Selecting a node
+   * builds the set of everything downstream of it -- a pairwise cell reaches
+   * the L1 neurons it actually drives, an L1 neuron reaches every L2 neuron and
+   * then the output -- and that whole chain is drawn bright, with chevrons
+   * showing the direction of flow, while the rest of the field recedes.
    */
   private drawEdges(f: Frame): void {
     const g = this.edges;
@@ -475,15 +479,13 @@ export class FieldRenderer {
     if (!this.arch || !this.pairW || !this.pairB) return;
     const arch = this.arch;
     const hov = this.hover;
-    const dim = hov ? 0.18 : 1;
+    const dim = hov ? 0.13 : 1;
 
     const whiteIsUs = f.sideToMove === 0;
-    // Map a raw l1in index to its pinned White/Black block position.
     const pairPos = (i: number) => {
       const isUsHalf = i < arch.pair;
       const local = isUsHalf ? i : i - arch.pair;
-      const white = isUsHalf === whiteIsUs;
-      const b = white ? this.pairW! : this.pairB!;
+      const b = isUsHalf === whiteIsUs ? this.pairW! : this.pairB!;
       return {
         x: b.x + (local % b.cols) * b.cell + b.cell / 2,
         y: b.y + Math.floor(local / b.cols) * b.cell + b.cell / 2,
@@ -492,38 +494,111 @@ export class FieldRenderer {
 
     const k = f.l1TopK;
     const hasTop = k > 0 && f.l1Top.length >= arch.l1 * k * 2;
-    let maxTop = 1;
-    if (hasTop)
+
+    // --- everything downstream of the hovered node ------------------------
+    const fPair = new Set<number>();
+    const fL1 = new Set<number>();
+    const fL2 = new Set<number>();
+    let fOut = false;
+    let fSquare = -1;
+
+    if (hov) {
+      switch (hov.layer) {
+        case "square":
+          fSquare = hov.index;
+          break;
+        case "accW":
+        case "accB": {
+          // acc[i] pairs with acc[i + PAIR] to form one pairwise activation.
+          const local = hov.index % arch.pair;
+          const white = hov.layer === "accW";
+          fPair.add(local + (white === whiteIsUs ? 0 : arch.pair));
+          break;
+        }
+        case "pairW":
+        case "pairB": {
+          const white = hov.layer === "pairW";
+          fPair.add(hov.index + (white === whiteIsUs ? 0 : arch.pair));
+          break;
+        }
+        case "l1":
+          fL1.add(hov.index);
+          break;
+        case "l2":
+          fL2.add(hov.index);
+          break;
+        case "out":
+          fOut = true;
+          break;
+      }
+      // Propagate forward, layer by layer.
+      if (fPair.size && hasTop) {
+        for (let o = 0; o < arch.l1; o++)
+          for (let j = 0; j < k; j++)
+            if (fPair.has(f.l1Top[(o * k + j) * 2])) fL1.add(o);
+      }
+      if (fL1.size) for (let o = 0; o < arch.l2; o++) fL2.add(o); // dense layer
+      if (fL2.size) fOut = true;
+    }
+
+    /** A chevron 60% along the edge, pointing downstream. */
+    const arrow = (
+      ax: number,
+      ay: number,
+      bx: number,
+      by: number,
+      color: number,
+      alpha: number,
+    ) => {
+      const mx = ax + (bx - ax) * 0.6;
+      const my = ay + (by - ay) * 0.6;
+      const len = Math.hypot(bx - ax, by - ay) || 1;
+      const ux = (bx - ax) / len;
+      const uy = (by - ay) / len;
+      const s = 4.5;
+      hi.moveTo(mx - ux * s - uy * s * 0.6, my - uy * s + ux * s * 0.6);
+      hi.lineTo(mx, my);
+      hi.lineTo(mx - ux * s + uy * s * 0.6, my - uy * s - ux * s * 0.6);
+      hi.stroke({ width: 1.1, color, alpha });
+    };
+
+    // --- l1in -> L1 -------------------------------------------------------
+    if (hasTop) {
+      let maxTop = 1;
       for (let i = 1; i < f.l1Top.length; i += 2)
         maxTop = Math.max(maxTop, Math.abs(f.l1Top[i]));
-
-    // l1in -> L1
-    if (hasTop) {
       for (let o = 0; o < arch.l1; o++) {
         const node = this.l1[o];
         if (!node) continue;
-        const focus = hov?.layer === "l1" && hov.index === o;
-        const target = focus ? hi : g;
         for (let j = 0; j < k; j++) {
           const base = (o * k + j) * 2;
           const src = f.l1Top[base];
           const val = f.l1Top[base + 1];
           if (!val) continue;
           const t = Math.abs(val) / maxTop;
-          if (t < 0.06 && !focus) continue;
+          const onPath = fL1.has(o) && (fPair.size === 0 || fPair.has(src));
+          if (t < 0.06 && !onPath) continue;
           const p = pairPos(src);
-          target.moveTo(p.x, p.y);
-          target.lineTo(node.x, node.y);
-          target.stroke({
-            width: focus ? 0.8 + t * 2.2 : 0.4 + t * 1.4,
-            color: val >= 0 ? COL.pos : COL.neg,
-            alpha: (focus ? 0.35 + t * 0.55 : 0.06 + t * 0.45) * (focus ? 1 : dim),
-          });
+          const col = val >= 0 ? COL.pos : COL.neg;
+          if (onPath) {
+            hi.moveTo(p.x, p.y);
+            hi.lineTo(node.x, node.y);
+            hi.stroke({ width: 1 + t * 2.2, color: col, alpha: 0.45 + t * 0.5 });
+            if (fPair.size) arrow(p.x, p.y, node.x, node.y, col, 0.85);
+          } else {
+            g.moveTo(p.x, p.y);
+            g.lineTo(node.x, node.y);
+            g.stroke({
+              width: 0.4 + t * 1.4,
+              color: col,
+              alpha: (0.06 + t * 0.45) * dim,
+            });
+          }
         }
       }
     }
 
-    // L1 -> L2
+    // --- L1 -> L2 ---------------------------------------------------------
     if (f.l2Contrib.length >= arch.l2 * arch.l1) {
       let maxC = 1;
       for (let i = 0; i < f.l2Contrib.length; i++)
@@ -534,25 +609,35 @@ export class FieldRenderer {
         for (let j = 0; j < arch.l1; j++) {
           const val = f.l2Contrib[o * arch.l1 + j];
           const t = Math.abs(val) / maxC;
-          const focus =
-            (hov?.layer === "l2" && hov.index === o) ||
-            (hov?.layer === "l1" && hov.index === j);
-          if (t < 0.12 && !focus) continue;
+          const onPath = fL2.has(o) && (fL1.size === 0 || fL1.has(j));
+          if (t < 0.12 && !onPath) continue;
           const src = this.l1[j];
           if (!src) continue;
-          const target = focus ? hi : g;
-          target.moveTo(src.x, src.y);
-          target.lineTo(dst.x, dst.y);
-          target.stroke({
-            width: focus ? 0.8 + t * 1.8 : 0.3 + t * 1,
-            color: val >= 0 ? COL.pos : COL.neg,
-            alpha: (focus ? 0.3 + t * 0.5 : 0.05 + t * 0.32) * (focus ? 1 : dim),
-          });
+          const col = val >= 0 ? COL.pos : COL.neg;
+          if (onPath) {
+            hi.moveTo(src.x, src.y);
+            hi.lineTo(dst.x, dst.y);
+            hi.stroke({
+              width: 0.8 + t * 1.8,
+              color: col,
+              alpha: 0.3 + t * 0.55,
+            });
+            if (fL1.has(j) && t > 0.25)
+              arrow(src.x, src.y, dst.x, dst.y, col, 0.8);
+          } else {
+            g.moveTo(src.x, src.y);
+            g.lineTo(dst.x, dst.y);
+            g.stroke({
+              width: 0.3 + t * 1,
+              color: col,
+              alpha: (0.05 + t * 0.32) * dim,
+            });
+          }
         }
       }
     }
 
-    // L2 -> output
+    // --- L2 -> output -----------------------------------------------------
     if (this.out && f.outContrib.length >= arch.l2) {
       let maxC = 1;
       for (let i = 0; i < f.outContrib.length; i++)
@@ -560,46 +645,54 @@ export class FieldRenderer {
       for (let j = 0; j < arch.l2; j++) {
         const val = f.outContrib[j];
         const t = Math.abs(val) / maxC;
-        const focus =
-          hov?.layer === "out" || (hov?.layer === "l2" && hov.index === j);
-        if (t < 0.05 && !focus) continue;
+        const onPath = fOut && (fL2.size === 0 || fL2.has(j));
+        if (t < 0.05 && !onPath) continue;
         const src = this.l2[j];
         if (!src) continue;
-        const target = focus ? hi : g;
-        target.moveTo(src.x, src.y);
-        target.lineTo(this.out.x, this.out.y);
-        target.stroke({
-          width: focus ? 1 + t * 2.6 : 0.5 + t * 2,
-          color: val >= 0 ? COL.pos : COL.neg,
-          alpha: (focus ? 0.4 + t * 0.5 : 0.1 + t * 0.55) * (focus ? 1 : dim),
-        });
-      }
-    }
-
-    // Feature rays: a piece feeds the whole accumulator, so the ray goes to the
-    // block edge rather than pretending it targets one cell.
-    if (this.accW && this.accB) {
-      for (const feat of f.whiteFeatures) {
-        const d = this.squares[feat.square];
-        if (!d) continue;
-        const focus = hov?.layer === "square" && hov.index === feat.square;
-        const target = focus ? hi : g;
-        for (const b of [this.accW, this.accB]) {
-          target.moveTo(d.x, d.y);
-          target.lineTo(b.x - 8, b.y + (b.rows * b.cell) / 2);
-          target.stroke({
-            width: focus ? 1.2 : 0.5,
-            color: COL.accent,
-            alpha: (focus ? 0.5 : 0.1) * (focus ? 1 : dim),
+        const col = val >= 0 ? COL.pos : COL.neg;
+        if (onPath) {
+          hi.moveTo(src.x, src.y);
+          hi.lineTo(this.out.x, this.out.y);
+          hi.stroke({ width: 1 + t * 2.6, color: col, alpha: 0.4 + t * 0.5 });
+          if (t > 0.2) arrow(src.x, src.y, this.out.x, this.out.y, col, 0.85);
+        } else {
+          g.moveTo(src.x, src.y);
+          g.lineTo(this.out.x, this.out.y);
+          g.stroke({
+            width: 0.5 + t * 2,
+            color: col,
+            alpha: (0.1 + t * 0.55) * dim,
           });
         }
       }
     }
 
-    // Ring the hovered node so the cursor target is unambiguous.
+    // --- feature rays -----------------------------------------------------
+    if (this.accW && this.accB) {
+      for (const feat of f.whiteFeatures) {
+        const d = this.squares[feat.square];
+        if (!d) continue;
+        const onPath = fSquare === feat.square;
+        for (const b of [this.accW, this.accB]) {
+          const tx = b.x - 8;
+          const ty = b.y + (b.rows * b.cell) / 2;
+          if (onPath) {
+            hi.moveTo(d.x, d.y);
+            hi.lineTo(tx, ty);
+            hi.stroke({ width: 1.4, color: COL.accent, alpha: 0.6 });
+            arrow(d.x, d.y, tx, ty, COL.accent, 0.85);
+          } else {
+            g.moveTo(d.x, d.y);
+            g.lineTo(tx, ty);
+            g.stroke({ width: 0.5, color: COL.accent, alpha: 0.1 * dim });
+          }
+        }
+      }
+    }
+
     if (hov) {
       hi.circle(hov.x, hov.y, 13);
-      hi.stroke({ width: 1.2, color: COL.accent, alpha: 0.9 });
+      hi.stroke({ width: 1.3, color: COL.accent, alpha: 0.95 });
     }
   }
 }

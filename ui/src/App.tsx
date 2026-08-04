@@ -108,6 +108,9 @@ export default function App() {
           frame={state?.frame ?? null}
           arch={state?.arch ?? null}
           nnueActive={state?.nnueActive ?? false}
+          pv={state?.search.pv ?? []}
+          depth={state?.search.depth ?? 0}
+          thinking={state?.thinking ?? false}
         />
       </div>
 

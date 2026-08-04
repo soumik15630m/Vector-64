@@ -26,7 +26,7 @@ export function Board({ state, onMove }: Props) {
       coordinates: false,
       animation: { enabled: true, duration: 180 },
       movable: { free: false, color: undefined, dests: new Map() },
-      drawable: { enabled: false },
+      drawable: { enabled: false, autoShapes: [] },
       highlight: { lastMove: true, check: true },
     });
     return () => {
@@ -56,6 +56,19 @@ export function Board({ state, onMove }: Props) {
       state.engineColor !== sideToMoveIndex(state.game.fen);
 
     const last = state.game.lastMove;
+    // Show what the engine intends to play next as an arrow, so the board and
+    // the network view agree on the decision being made.
+    const intend = state.search.pv[0];
+    const shapes =
+      intend && intend.length >= 4 && !state.game.over
+        ? [
+            {
+              orig: intend.slice(0, 2) as Key,
+              dest: intend.slice(2, 4) as Key,
+              brush: "paleBlue",
+            },
+          ]
+        : [];
     cg.set({
       fen: state.game.fen.split(" ")[0],
       turnColor: sideToMoveIndex(state.game.fen) === 0 ? "white" : "black",
@@ -63,6 +76,7 @@ export function Board({ state, onMove }: Props) {
         last && last.length >= 4
           ? [last.slice(0, 2) as Key, last.slice(2, 4) as Key]
           : undefined,
+      drawable: { enabled: false, autoShapes: shapes },
       movable: {
         free: false,
         color: humanTurn
