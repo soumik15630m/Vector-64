@@ -134,7 +134,6 @@ private:
   void apply_move_internal(Core::Move m);
   bool detect_terminal(bool hadLegalMove);
   void reset_game(bool randomOpening);
-  void refresh_legal_moves();
 
   Config cfg_;
   Search::EngineSearch search_;

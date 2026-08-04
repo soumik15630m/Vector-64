@@ -181,7 +181,6 @@ bool Session::set_position(const std::string &fen,
     ++boardGen_;
   }
   abortSearch_.store(true);
-  refresh_legal_moves();
   publish();
   return true;
 }
@@ -198,7 +197,6 @@ bool Session::play_move(const std::string &uci) {
     ++boardGen_;
   }
   abortSearch_.store(true);
-  refresh_legal_moves();
   publish();
   return true;
 }
@@ -238,23 +236,6 @@ void Session::reset_game(bool randomOpening) {
   search_.clear(); // games are independent
 }
 
-void Session::refresh_legal_moves() {
-  std::vector<std::string> out;
-  {
-    std::lock_guard<std::mutex> lk(cmdMu_);
-    Core::Position scratch = pos_;
-    Core::MoveList legal;
-    Core::generate_legal_moves(scratch, legal);
-    out.reserve(static_cast<size_t>(legal.size()));
-    for (int i = 0; i < legal.size(); ++i)
-      out.push_back(UCI::move_to_uci(legal[i]));
-  }
-  std::lock_guard<std::mutex> lk(mu_);
-  snap_.legalMoves = std::move(out);
-  snap_.seq = ++seq_;
-  cv_.notify_all();
-}
-
 Snapshot Session::snapshot() const {
   std::lock_guard<std::mutex> lk(mu_);
   return snap_;
@@ -285,8 +266,17 @@ void Session::publish() {
   GameState g;
   Mode m;
   int ec;
+  std::vector<std::string> legalNow;
   {
     std::lock_guard<std::mutex> lk(cmdMu_);
+    // Generated here, under the same lock as the FEN below: a client must
+    // never be offered moves that belong to a different position.
+    Core::Position scratch = pos_;
+    Core::MoveList legal;
+    Core::generate_legal_moves(scratch, legal);
+    legalNow.reserve(static_cast<size_t>(legal.size()));
+    for (int i = 0; i < legal.size(); ++i)
+      legalNow.push_back(UCI::move_to_uci(legal[i]));
     g.fen = pos_.toFEN();
     g.startFen = startFen_;
     g.moves = moves_;
@@ -304,6 +294,7 @@ void Session::publish() {
   }
   std::lock_guard<std::mutex> lk(mu_);
   snap_.game = std::move(g);
+  snap_.legalMoves = std::move(legalNow);
   snap_.mode = m;
   snap_.engineColor = ec;
   snap_.running = !stop_.load();
@@ -498,7 +489,6 @@ void Session::human_step() {
     }
     publish_frame_current();
   }
-  refresh_legal_moves();
   publish();
 }
 

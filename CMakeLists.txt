@@ -134,12 +134,21 @@ if(EXISTS "${EMBED_NNUE}" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|MSVC")
                 enable_language(RC)
                 configure_file(src/nnue/embedded_net.rc.in
                         ${CMAKE_BINARY_DIR}/embedded_net.rc @ONLY)
+                # The resource only references the net by path, so make cannot
+                # see that dependency by itself: state it, or a changed net
+                # silently keeps the previously embedded bytes.
+                set_source_files_properties(${CMAKE_BINARY_DIR}/embedded_net.rc
+                        PROPERTIES OBJECT_DEPENDS "${EMBED_NNUE}")
                 list(APPEND _nnue_embed ${CMAKE_BINARY_DIR}/embedded_net.rc)
         else()
                 # GNU-as .incbin (ELF: Linux, Mach-O: macOS, PE-COFF: MinGW).
                 enable_language(ASM)
                 configure_file(src/nnue/embedded_net.S.in
                         ${CMAKE_BINARY_DIR}/embedded_net.S @ONLY)
+                # .incbin pulls the net in at assemble time; make cannot see
+                # that, so declare it or a changed net is silently ignored.
+                set_source_files_properties(${CMAKE_BINARY_DIR}/embedded_net.S
+                        PROPERTIES OBJECT_DEPENDS "${EMBED_NNUE}")
                 list(APPEND _nnue_embed ${CMAKE_BINARY_DIR}/embedded_net.S)
         endif()
         add_executable(ChessEngine-nnue
@@ -215,11 +224,15 @@ if(ENGINE_VIZ)
                 enable_language(RC)
                 configure_file(src/nnue/embedded_net.rc.in
                         ${CMAKE_BINARY_DIR}/viz_embedded_net.rc @ONLY)
+                set_source_files_properties(${CMAKE_BINARY_DIR}/viz_embedded_net.rc
+                        PROPERTIES OBJECT_DEPENDS "${EMBED_NNUE}")
                 list(APPEND _viz_sources ${CMAKE_BINARY_DIR}/viz_embedded_net.rc)
             else()
                 enable_language(ASM)
                 configure_file(src/nnue/embedded_net.S.in
                         ${CMAKE_BINARY_DIR}/viz_embedded_net.S @ONLY)
+                set_source_files_properties(${CMAKE_BINARY_DIR}/viz_embedded_net.S
+                        PROPERTIES OBJECT_DEPENDS "${EMBED_NNUE}")
                 list(APPEND _viz_sources ${CMAKE_BINARY_DIR}/viz_embedded_net.S)
             endif()
             list(APPEND _viz_sources src/nnue/embedded_net.cpp)
@@ -232,11 +245,17 @@ if(ENGINE_VIZ)
                 enable_language(RC)
                 configure_file(src/viz/embedded_ui.rc.in
                         ${CMAKE_BINARY_DIR}/embedded_ui.rc @ONLY)
+                set_source_files_properties(${CMAKE_BINARY_DIR}/embedded_ui.rc
+                        PROPERTIES OBJECT_DEPENDS "${STK_UI_BUNDLE}")
                 list(APPEND _viz_sources ${CMAKE_BINARY_DIR}/embedded_ui.rc)
             else()
                 enable_language(ASM)
                 configure_file(src/viz/embedded_ui.S.in
                         ${CMAKE_BINARY_DIR}/embedded_ui.S @ONLY)
+                # Rebuild the embed whenever the bundle changes -- otherwise
+                # `npm run build` appears to do nothing.
+                set_source_files_properties(${CMAKE_BINARY_DIR}/embedded_ui.S
+                        PROPERTIES OBJECT_DEPENDS "${STK_UI_BUNDLE}")
                 list(APPEND _viz_sources ${CMAKE_BINARY_DIR}/embedded_ui.S)
             endif()
             message(STATUS "Visualizer: embedding UI bundle ${STK_UI_BUNDLE}")

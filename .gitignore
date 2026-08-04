@@ -63,3 +63,8 @@ Thumbs.db
 *.cache
 runs/
 *.jsonl.zst
+
+# Visualizer UI: node_modules is never committed, but the built single-file
+# bundle IS -- ChessEngine-viz embeds it, so a C++ build needs no Node.
+ui/node_modules/
+ui/.vite/
