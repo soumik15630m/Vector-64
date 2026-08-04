@@ -105,6 +105,8 @@ export interface EngineState {
   thinking: boolean;
   nnueActive: boolean;
   threads: number;
+  /** Cores this machine reports; the thread control never exceeds it. */
+  hardwareThreads: number;
   engineColor: number;
   arch: Arch;
   game: GameState;
@@ -119,6 +121,7 @@ export type ControlCommand =
   | { cmd: "newgame" }
   | { cmd: "delay"; value: number }
   | { cmd: "nodes"; value: number }
+  | { cmd: "threads"; value: number }
   | { cmd: "enginecolor"; value: number }
   | { cmd: "mode"; value: Mode }
   | { cmd: "position"; fen: string; moves: string[] }

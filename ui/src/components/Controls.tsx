@@ -1,5 +1,45 @@
 import { useState } from "react";
+import { Chess } from "chess.js";
 import type { ControlCommand, EngineState, Mode } from "../engine/types";
+
+/**
+ * Turn pasted PGN or a FEN into something the engine accepts.
+ *
+ * chess.js only parses the notation into a move list; every move is still
+ * validated by the engine when the position is applied, so the UI cannot talk
+ * the engine into an illegal position.
+ */
+function parsePosition(
+  text: string,
+): { fen: string; moves: string[] } | { error: string } {
+  const t = text.trim();
+  if (!t) return { error: "empty" };
+
+  // A bare FEN: 6 space-separated fields with a side-to-move letter.
+  if (/^[1-8pnbrqkPNBRQK/]+\s+[wb]\s/.test(t)) {
+    const chess = new Chess();
+    try {
+      chess.load(t);
+    } catch {
+      return { error: "invalid FEN" };
+    }
+    return { fen: t, moves: [] };
+  }
+
+  const chess = new Chess();
+  try {
+    chess.loadPgn(t);
+  } catch {
+    return { error: "could not parse PGN" };
+  }
+  const history = chess.history({ verbose: true });
+  if (history.length === 0) return { error: "no moves in that PGN" };
+  const start = history[0].before;
+  return {
+    fen: start,
+    moves: history.map((m) => `${m.from}${m.to}${m.promotion ?? ""}`),
+  };
+}
 
 interface Props {
   s: EngineState;
@@ -14,8 +54,14 @@ const MODES: { id: Mode; label: string }[] = [
 
 export function Controls({ s, send }: Props) {
   const [fen, setFen] = useState("");
+  const [posError, setPosError] = useState<string | null>(null);
   const [delay, setDelay] = useState(300);
   const [nodes, setNodes] = useState(20000);
+  // Never offer more threads than the machine has: past the core count lazy
+  // SMP gets slower, not faster. The engine clamps too, so a stale UI value
+  // cannot push it out of range.
+  const maxThreads = Math.max(1, s.hardwareThreads || 1);
+  const [threads, setThreads] = useState(Math.min(s.threads, maxThreads));
 
   return (
     <div className="panel">
@@ -99,17 +145,55 @@ export function Controls({ s, send }: Props) {
         </div>
       </div>
 
+      <div style={{ marginTop: 8 }}>
+        <label className="lbl">
+          threads
+          <b>
+            {Math.min(threads, maxThreads)} / {maxThreads}
+          </b>
+        </label>
+        <input
+          type="range"
+          min={1}
+          max={maxThreads}
+          step={1}
+          disabled={maxThreads === 1}
+          value={Math.min(threads, maxThreads)}
+          onChange={(e) => {
+            const v = Math.min(
+              Math.max(1, Number(e.currentTarget.value) || 1),
+              maxThreads,
+            );
+            setThreads(v);
+            send({ cmd: "threads", value: v });
+          }}
+        />
+      </div>
+
       {s.mode === "analysis" && (
         <div style={{ marginTop: 9 }}>
-          <label className="lbl">position</label>
-          <input
-            type="text"
-            placeholder="paste a FEN, press Enter"
+          <label className="lbl">
+            position
+            {posError && <b style={{ color: "var(--bad)" }}>{posError}</b>}
+          </label>
+          <textarea
+            className="pos-input"
+            placeholder="paste a FEN or a PGN, then press Enter"
             value={fen}
-            onChange={(e) => setFen(e.currentTarget.value)}
+            onChange={(e) => {
+              setFen(e.currentTarget.value);
+              setPosError(null);
+            }}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && fen.trim())
-                send({ cmd: "position", fen: fen.trim(), moves: [] });
+              if (e.key !== "Enter" || e.shiftKey) return;
+              e.preventDefault();
+              const parsed = parsePosition(fen);
+              if ("error" in parsed) {
+                setPosError(parsed.error);
+                return;
+              }
+              setPosError(null);
+              send({ cmd: "position", fen: parsed.fen, moves: parsed.moves });
             }}
           />
         </div>

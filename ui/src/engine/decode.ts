@@ -94,6 +94,9 @@ export function decodeState(buf: ArrayBuffer): EngineState {
     thinking: header.thinking,
     nnueActive: header.nnueActive,
     threads: header.threads,
+    // Older engines will not send it; fall back to something safe rather than
+    // offering a slider that runs to a made-up maximum.
+    hardwareThreads: header.hardwareThreads ?? header.threads ?? 1,
     engineColor: header.engineColor,
     arch: header.arch,
     game: header.game,

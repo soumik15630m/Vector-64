@@ -139,13 +139,13 @@ export function NetInspector({
                   background: `color-mix(in srgb, var(--accent-deep) ${18 + t * 82}%, var(--panel-2))`,
                 }}
               >
-                {e?.bucket ?? ""}
+                {isWhiteKing ? "W" : isBlackKing ? "B" : (e?.bucket ?? "")}
               </div>
             );
           })}
         </div>
         <div className="axis">
-          <span>outlined = current kings</span>
+          <span>W / B = each side&apos;s king square</span>
           <span>
             {f ? `w ${f.white.kingBucket} · b ${f.black.kingBucket}` : "—"}
           </span>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { connect } from "./engine/connect";
 import type { BootProgress } from "./engine/connect";
 import type { ConnectionState, EngineSource } from "./engine/source";
@@ -25,6 +25,46 @@ export default function App() {
   const [showNet, setShowNet] = useState(false);
   // Hovering a candidate previews it on the board.
   const [hoverMove, setHoverMove] = useState<string | null>(null);
+  // Click the board to enlarge it; click the speed chip for the full counters.
+  const [boardBig, setBoardBig] = useState(false);
+  const [showPerf, setShowPerf] = useState(false);
+  // Column widths are user-adjustable; the centre takes whatever is left.
+  const [cols, setCols] = useState({ left: 332, right: 300 });
+  const drag = useRef<{ side: "left" | "right"; x0: number; w0: number } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const d = drag.current;
+      if (!d) return;
+      const delta = e.clientX - d.x0;
+      const raw = d.side === "left" ? d.w0 + delta : d.w0 - delta;
+      // Keep both side columns usable and always leave room for the field.
+      const max = Math.max(240, window.innerWidth * 0.34);
+      const w = Math.min(max, Math.max(240, raw));
+      setCols((c) => ({ ...c, [d.side]: w }));
+    };
+    const up = () => {
+      drag.current = null;
+      document.body.style.cursor = "";
+      document.querySelectorAll(".gutter.drag").forEach((g) =>
+        g.classList.remove("drag"),
+      );
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, []);
+
+  const startDrag = (side: "left" | "right") => (e: React.PointerEvent) => {
+    drag.current = { side, x0: e.clientX, w0: cols[side] };
+    document.body.style.cursor = "col-resize";
+    (e.currentTarget as HTMLElement).classList.add("drag");
+  };
 
   useEffect(() => {
     let alive = true;
@@ -63,7 +103,12 @@ export default function App() {
   if (boot) return <BootScreen p={boot} />;
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      style={{
+        gridTemplateColumns: `${cols.left}px minmax(0, 1fr) ${cols.right}px`,
+      }}
+    >
       <div className="topbar">
         <div className="brand">
           STK<span>·</span>Vector-64 <span>/</span> Vector Scope
@@ -80,10 +125,18 @@ export default function App() {
             <span className="chip">
               <b>{state.threads}</b> thread{state.threads === 1 ? "" : "s"}
             </span>
-            <span className="chip">
-              <b>{state.search.nps ? Math.round(state.search.nps / 1000) : 0}</b>k
-              nps
-            </span>
+            <button
+              className={`chip act${showPerf ? " on" : ""}`}
+              onClick={() => setShowPerf((v) => !v)}
+              title="speed and search counters"
+            >
+              <b>
+                {state.search.nps
+                  ? (state.search.nps / 1e6).toFixed(2)
+                  : "0.00"}
+              </b>{" "}
+              Mnps
+            </button>
           </>
         )}
         <button
@@ -95,11 +148,17 @@ export default function App() {
       </div>
 
       <div className="col col-left">
-        <Board
-          state={state}
-          highlight={hoverMove}
-          onMove={(uci) => send({ cmd: "move", value: uci })}
-        />
+        <div
+          className="board-slot"
+          onClick={() => setBoardBig(true)}
+          title="click to enlarge"
+        >
+          <Board
+            state={state}
+            highlight={hoverMove}
+            onMove={(uci) => send({ cmd: "move", value: uci })}
+          />
+        </div>
         <div className="col-scroll">
           {state && <EvalPanel s={state} />}
           {state && <CandidatesPanel s={state} onHover={setHoverMove} />}
@@ -107,6 +166,19 @@ export default function App() {
           {state && <GamePanel s={state} />}
         </div>
       </div>
+
+      <div
+        className="gutter"
+        style={{ left: cols.left + 12 }}
+        onPointerDown={startDrag("left")}
+        title="drag to resize"
+      />
+      <div
+        className="gutter"
+        style={{ right: cols.right + 12, left: "auto" }}
+        onPointerDown={startDrag("right")}
+        title="drag to resize"
+      />
 
       <div className="center">
         <NeuronField
@@ -134,6 +206,19 @@ export default function App() {
         </div>
       </div>
 
+      {showPerf && state && (
+        <PerfOverlay s={state} onClose={() => setShowPerf(false)} />
+      )}
+
+      {boardBig && state && (
+        <BigBoard
+          state={state}
+          highlight={hoverMove}
+          onMove={(uci) => send({ cmd: "move", value: uci })}
+          onClose={() => setBoardBig(false)}
+        />
+      )}
+
       <div className="statusbar">
         <span>
           <span
@@ -153,6 +238,137 @@ export default function App() {
         )}
         <div style={{ flex: 1 }} />
         <span>every value shown is the engine's own output</span>
+      </div>
+    </div>
+  );
+}
+
+/** Full search counters, opened from the speed chip. */
+function PerfOverlay({
+  s,
+  onClose,
+}: {
+  s: EngineState;
+  onClose: () => void;
+}) {
+  const q = s.search;
+  const rows: [string, string][] = [
+    ["speed", `${(q.nps / 1e6).toFixed(3)} Mnps`],
+    ["nodes this search", q.nodes.toLocaleString("en-US")],
+    ["time", `${q.elapsedMs} ms`],
+    ["depth / seldepth", `${q.depth} / ${q.seldepth}`],
+    ["threads", `${s.threads} of ${s.hardwareThreads}`],
+    ["nps per thread", `${(q.nps / Math.max(1, s.threads) / 1e6).toFixed(3)} Mnps`],
+    ["tt hit · main", `${q.negamaxTtHitRate.toFixed(1)}%`],
+    ["tt hit · qsearch", `${q.qsearchTtHitRate.toFixed(1)}%`],
+    ["tb hits", q.tbHits ? q.tbHits.toLocaleString("en-US") : "—"],
+    ["candidates searched", `${q.candidates.length}`],
+    ["evaluation", s.nnueActive ? "NNUE (H=1024)" : "classical"],
+  ];
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <h3>
+          Performance <i>click anywhere to close</i>
+        </h3>
+        {rows.map(([k, v]) => (
+          <div className="row" key={k}>
+            <span className="k">{k}</span>
+            <span className="v num">{v}</span>
+          </div>
+        ))}
+        <div className="pv" style={{ marginTop: 8 }}>
+          {q.pv.join(" ") || "—"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The board at full size, with the move list and candidates beside it. */
+function BigBoard({
+  state,
+  highlight,
+  onMove,
+  onClose,
+}: {
+  state: EngineState;
+  highlight: string | null;
+  onMove: (uci: string) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [onClose]);
+
+  const g = state.game;
+  const stm = g.fen.split(" ")[1] === "b" ? -1 : 1;
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="board-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="big-board">
+          <Board state={state} highlight={highlight} onMove={onMove} />
+        </div>
+        <div className="board-side">
+          <div className="panel">
+            <h3>
+              Position <i>game #{g.gameIndex}</i>
+            </h3>
+            <div className="row">
+              <span className="k">evaluation</span>
+              <span className="v num">
+                {((state.frame?.eval ?? state.search.scoreCp) * stm) / 100 >= 0
+                  ? "+"
+                  : "−"}
+                {Math.abs(
+                  ((state.frame?.eval ?? state.search.scoreCp) * stm) / 100,
+                ).toFixed(2)}
+              </span>
+            </div>
+            <div className="row">
+              <span className="k">to move</span>
+              <span className="v">{stm === 1 ? "white" : "black"}</span>
+            </div>
+            <div className="row">
+              <span className="k">ply</span>
+              <span className="v num">{g.ply}</span>
+            </div>
+            <div className="row">
+              <span className="k">result</span>
+              <span className="v">
+                {g.over ? `${g.result} · ${g.reason}` : "in progress"}
+              </span>
+            </div>
+            <div className="row">
+              <span className="k">fen</span>
+              <span className="v" />
+            </div>
+            <div className="pv" style={{ height: 34 }}>
+              {g.fen}
+            </div>
+          </div>
+          {state.search.candidates.length > 0 && (
+            <CandidatesPanel s={state} />
+          )}
+          <div className="panel" style={{ minHeight: 0 }}>
+            <h3>Moves</h3>
+            <div className="moves" style={{ height: 150 }}>
+              {g.moves.length === 0
+                ? "—"
+                : g.moves.map((m, i) => (
+                    <span
+                      key={`${i}-${m}`}
+                      className={`mv${i === g.moves.length - 1 ? " last" : ""}`}
+                    >
+                      {i % 2 === 0 ? `${Math.floor(i / 2) + 1}.` : ""}
+                      {m}{" "}
+                    </span>
+                  ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

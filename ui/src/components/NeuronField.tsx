@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FieldRenderer } from "../field/renderer";
-import type { HoverTarget } from "../field/renderer";
+import type { HoverTarget, Perspective } from "../field/renderer";
 import type { Arch, Frame } from "../engine/types";
 
 interface Props {
@@ -100,9 +100,12 @@ function describeCard(
             bestO >= 0 ? `L2 ${bestO} (${signed(bestV)})` : "—",
           ],
         ],
-        // Naming the move makes the chain concrete: this neuron is part of what
-        // produced that choice, not an isolated number.
-        line: pv[0] ? `feeds the choice of ${pv[0]}` : undefined,
+        // L1 feeds L2 through a clip and a shift, so its effect on the final
+        // number is NOT linear -- say what it does (feeds the stack) rather
+        // than implying a centipawn effect it does not have.
+        line: pv[0]
+          ? `1 of ${arch.l1} inputs to the eval behind ${pv[0]}`
+          : undefined,
         tone: drive > 0 ? "pos" : drive < 0 ? "neg" : undefined,
       };
     }
@@ -121,7 +124,11 @@ function describeCard(
           ["share of output", `${((Math.abs(c) / Math.max(1, total)) * 100).toFixed(1)}%`],
           ["effect", c > 0 ? "raises eval" : c < 0 ? "lowers eval" : "neutral"],
         ],
-        line: pv[0] ? `feeds the choice of ${pv[0]}` : undefined,
+        // L2 feeds the output directly, so this one really is a signed change
+        // to the evaluation behind the chosen move.
+        line: pv[0]
+          ? `${c > 0 ? "raises" : c < 0 ? "lowers" : "does not move"} the eval behind ${pv[0]}`
+          : undefined,
         tone: c > 0 ? "pos" : c < 0 ? "neg" : undefined,
       };
     }
@@ -193,6 +200,7 @@ export function NeuronField({
   const hostRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<FieldRenderer | null>(null);
   const [hover, setHover] = useState<HoverTarget | null>(null);
+  const [persp, setPersp] = useState<Perspective>("both");
 
   const onHover = useCallback((h: HoverTarget | null) => setHover(h), []);
 
@@ -242,6 +250,12 @@ export function NeuronField({
     if (frame) r.update(frame);
   }, [frame, arch]);
 
+  // Applies immediately from the last frame, so switching while paused shows
+  // the paused position instead of waiting for the next one.
+  useEffect(() => {
+    rendererRef.current?.setPerspective(persp);
+  }, [persp, frame]);
+
   // Big nodes get the card; small cells get the cursor tooltip. Never both.
   const card =
     hover && frame && arch
@@ -259,6 +273,20 @@ export function NeuronField({
           there is no network to show.
         </div>
       )}
+
+      <div className="persp-switch" role="radiogroup" aria-label="perspective">
+        {(["white", "both", "black"] as Perspective[]).map((p) => (
+          <button
+            key={p}
+            role="radio"
+            aria-checked={persp === p}
+            className={persp === p ? "on" : ""}
+            onClick={() => setPersp(p)}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
 
       <div className="field-labels">
         {LAYERS.map((l) => (

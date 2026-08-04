@@ -34,6 +34,8 @@ describe("wire format contract", () => {
     expect(state.thinking).toBe(true);
     expect(state.nnueActive).toBe(true);
     expect(state.threads).toBe(2);
+    // The thread control clamps to this, so it must always arrive and be sane.
+    expect(state.hardwareThreads).toBeGreaterThanOrEqual(1);
     expect(state.engineColor).toBe(1);
     expect(state.legalMoves).toEqual(["e2e4", "d2d4"]);
   });

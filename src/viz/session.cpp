@@ -65,7 +65,9 @@ bool mode_from_name(const std::string &s, Mode &out) {
 
 Session::Session(Config cfg)
     : cfg_(cfg), search_(static_cast<size_t>(cfg.hashMb)) {
-  search_.set_threads(std::max(1, cfg_.threads));
+  appliedThreads_ = std::max(1, cfg_.threads);
+  threads_.store(appliedThreads_);
+  search_.set_threads(appliedThreads_);
   search_.set_multipv(std::max(1, cfg_.multiPv));
   moveDelayMs_.store(cfg_.moveDelayMs);
   nodes_.store(cfg_.nodes);
@@ -132,6 +134,21 @@ void Session::step() {
 void Session::set_move_delay(int ms) { moveDelayMs_.store(std::max(0, ms)); }
 
 void Session::set_nodes(int nodes) { nodes_.store(std::max(1, nodes)); }
+
+int Session::hardware_threads() {
+  const unsigned hc = std::thread::hardware_concurrency();
+  // hardware_concurrency may report 0 when it cannot tell; fall back to 1
+  // rather than exposing a nonsense maximum.
+  return hc == 0 ? 1 : static_cast<int>(hc);
+}
+
+void Session::set_threads(int n) {
+  // Clamped to what the machine has: asking for more threads than cores makes
+  // lazy SMP slower, not faster.
+  threads_.store(std::clamp(n, 1, hardware_threads()));
+  abortSearch_.store(true); // take effect on the next search, not this one
+  cv_.notify_all();
+}
 
 void Session::set_engine_color(int color) {
   {
@@ -300,13 +317,19 @@ void Session::publish() {
   snap_.engineColor = ec;
   snap_.running = !stop_.load();
   snap_.paused = paused_.load();
-  snap_.threads = std::max(1, cfg_.threads);
+  snap_.threads = appliedThreads_;
   snap_.nnueActive = search_.evaluator().nnue_active();
   snap_.seq = ++seq_;
   cv_.notify_all();
 }
 
 Search::Result Session::think() {
+  // Thread count changes land here, between searches.
+  const int want = threads_.load();
+  if (want != appliedThreads_) {
+    appliedThreads_ = want;
+    search_.set_threads(want);
+  }
   Core::Position local;
   uint64_t gen;
   {

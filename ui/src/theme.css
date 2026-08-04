@@ -71,6 +71,7 @@ body {
 
 /* --- app shell --------------------------------------------------------- */
 .app {
+  position: relative;
   display: grid;
   grid-template-columns: 332px minmax(0, 1fr) 300px;
   grid-template-rows: 48px minmax(0, 1fr) 28px;
@@ -780,4 +781,177 @@ input[type="text"]:focus {
 }
 .cand .sc.neg {
   color: var(--neg);
+}
+
+textarea.pos-input {
+  width: 100%;
+  height: 58px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 6px 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+textarea.pos-input:focus {
+  outline: none;
+  border-color: var(--accent-deep);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* --- resizable tiles ---------------------------------------------------- */
+/* Native vertical resize on every panel: cheap, discoverable, and it cannot
+   break the grid because the columns scroll. */
+.col-scroll > .panel {
+  resize: vertical;
+  overflow: auto;
+}
+.col-scroll > .panel::-webkit-resizer {
+  background: transparent;
+}
+
+/* Draggable dividers so the three columns can be rebalanced. */
+.gutter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  margin-left: -4px;
+  cursor: col-resize;
+  z-index: 6;
+}
+.gutter::after {
+  content: "";
+  position: absolute;
+  inset: 40% 4px;
+  border-radius: 2px;
+  background: var(--line);
+  transition: background 0.15s var(--ease);
+}
+.gutter:hover::after,
+.gutter.drag::after {
+  background: var(--accent-deep);
+}
+
+/* --- perspective switch (over the field) -------------------------------- */
+.persp-switch {
+  position: absolute;
+  right: 14px;
+  top: 12px;
+  z-index: 4;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(6, 9, 14, 0.8);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+.persp-switch button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 4px 9px;
+  cursor: pointer;
+  transition: all 0.16s var(--ease);
+}
+.persp-switch button:hover {
+  color: var(--fg);
+}
+.persp-switch button.on {
+  background: var(--accent-glow);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-deep);
+}
+
+/* --- clickable chip ----------------------------------------------------- */
+.chip.act {
+  cursor: pointer;
+  font-family: var(--mono);
+}
+.chip.act:hover {
+  border-color: var(--accent-deep);
+  color: var(--accent);
+}
+
+/* --- board slot / overlays ---------------------------------------------- */
+.board-slot {
+  cursor: zoom-in;
+  position: relative;
+}
+.board-slot::after {
+  content: "⤢";
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  font-size: 13px;
+  color: var(--fg-faint);
+  opacity: 0;
+  transition: opacity 0.18s var(--ease);
+  pointer-events: none;
+}
+.board-slot:hover::after {
+  opacity: 1;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(3, 5, 9, 0.76);
+  backdrop-filter: blur(3px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.sheet {
+  width: 380px;
+  max-width: 92vw;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 14px 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+.sheet h3 {
+  margin: 0 0 10px;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  display: flex;
+  justify-content: space-between;
+}
+.sheet h3 i {
+  font-style: normal;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg-faint);
+}
+
+.board-sheet {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  width: min(1180px, 94vw);
+  max-height: 92vh;
+}
+.big-board {
+  min-width: 0;
+  align-self: center;
+}
+.board-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
 }

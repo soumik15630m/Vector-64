@@ -30,13 +30,15 @@ import type { Arch, Frame } from "../engine/types";
 // Mirrors the CSS custom properties in theme.css so canvas and DOM chrome stay
 // one visual system.
 const COL = {
-  neg: 0x4a90ff,
-  pos: 0xffb545,
-  zero: 0x151d2b,
-  accent: 0x4dd8ff,
-  white: 0xe8eef7,
-  black: 0x7b8ba3,
-  label: 0x5c6b81,
+  neg: 0x6aa8ff,
+  pos: 0xffc266,
+  // The "off" colour is a visible slate rather than near-black, so an inactive
+  // neuron still reads as a neuron instead of disappearing into the panel.
+  zero: 0x24334a,
+  accent: 0x6fe3ff,
+  white: 0xf2f7fd,
+  black: 0x9db0c8,
+  label: 0x8b9db5,
 };
 
 export type HoverLayer =
@@ -48,6 +50,8 @@ export type HoverLayer =
   | "l2"
   | "out"
   | "square";
+
+export type Perspective = "white" | "black" | "both";
 
 export interface HoverTarget {
   layer: HoverLayer;
@@ -140,6 +144,7 @@ export class FieldRenderer {
   private squares: Sprite[] = [];
 
   private arch?: Arch;
+  private persp: Perspective = "both";
   private frame?: Frame;
   private hover: HoverTarget | null = null;
   private selected: HoverTarget | null = null;
@@ -173,6 +178,21 @@ export class FieldRenderer {
     canvas.addEventListener("pointerdown", this.pointerDown);
     canvas.style.cursor = "crosshair";
     this.ready = true;
+  }
+
+  /**
+   * Show one side's accumulator full-height, or both stacked. Forces a
+   * re-layout and repaints from the last frame, so switching while paused
+   * shows the paused position rather than waiting for the next one.
+   */
+  setPerspective(p: Perspective): void {
+    if (p === this.persp) return;
+    this.persp = p;
+    this.w = 0; // invalidate the cached size so layout() rebuilds
+    if (this.arch) {
+      this.layout(this.arch);
+      if (this.frame) this.update(this.frame);
+    }
   }
 
   destroy(): void {
@@ -340,20 +360,35 @@ export class FieldRenderer {
       this.squares.push(s);
     }
 
-    // Two stacked blocks per stage, sized to fill and centred as a pair.
+    // One block per visible perspective, sized to fill the column. The gap is
+    // generous so the two halves read as separate networks rather than one
+    // block with a seam.
+    const single = this.persp !== "both";
     const stack = (count: number, cols: number, cx: number, maxW: number) => {
       const rows = Math.ceil(count / cols);
-      const gap = 24;
-      const cell = Math.min(maxW / cols, (usable - gap) / 2 / rows);
+      const gap = 40;
+      const cell = single
+        ? Math.min(maxW / cols, usable / rows)
+        : Math.min(maxW / cols, (usable - gap) / 2 / rows);
       const bw = cell * cols;
       const bh = cell * rows;
-      const top = padY + (usable - (bh * 2 + gap)) / 2;
       const x = cx - bw / 2;
+
+      if (single) {
+        const top = padY + (usable - bh) / 2;
+        const blk = this.makeBlock(count, cols, x, top, cell);
+        const white = this.persp === "white";
+        this.label(white ? "WHITE" : "BLACK", x, top - 12,
+                   white ? COL.white : COL.black);
+        return { a: white ? blk : undefined, b: white ? undefined : blk,
+                 x, bw, bh, top, gap: 0, only: blk };
+      }
+      const top = padY + (usable - (bh * 2 + gap)) / 2;
       const a = this.makeBlock(count, cols, x, top, cell);
       const b = this.makeBlock(count, cols, x, top + bh + gap, cell);
-      this.label("WHITE", x, top - 11, COL.white);
-      this.label("BLACK", x, top + bh + gap - 11, COL.black);
-      return { a, b, x, bw, bh, top, gap };
+      this.label("WHITE", x, top - 12, COL.white);
+      this.label("BLACK", x, top + bh + gap - 12, COL.black);
+      return { a, b, x, bw, bh, top, gap, only: undefined };
     };
 
     const acc = stack(arch.hidden, 32, w * 0.28, w * 0.2);
@@ -390,7 +425,7 @@ export class FieldRenderer {
     this.out.tint = COL.accent;
     this.nodes.addChild(this.out);
 
-    this.drawBackdrop(acc, pair, bx, by, boardSize);
+    this.drawBackdrop(acc, pair, bx, by, boardSize, single);
     if (this.frame) this.update(this.frame);
   }
 
@@ -401,6 +436,7 @@ export class FieldRenderer {
     bx: number,
     by: number,
     boardSize: number,
+    single: boolean,
   ): void {
     const g = this.backdrop;
     g.clear();
@@ -412,14 +448,14 @@ export class FieldRenderer {
       g.stroke({ width: 1, color: 0x1b2432, alpha: 0.8 });
     };
     panel(bx, by, boardSize, boardSize);
-    for (const s of [acc, pair]) {
-      panel(s.x, s.top, s.bw, s.bh);
-      panel(s.x, s.top + s.bh + s.gap, s.bw, s.bh);
+    for (const st of [acc, pair]) {
+      panel(st.x, st.top, st.bw, st.bh);
+      if (!single) panel(st.x, st.top + st.bh + st.gap, st.bw, st.bh);
     }
   }
 
   update(f: Frame): void {
-    if (!this.ready || !this.arch || !this.accW || !this.accB) return;
+    if (!this.ready || !this.arch) return;
     this.frame = f;
     const arch = this.arch;
     const act = arch.actMax || 127;
@@ -449,8 +485,8 @@ export class FieldRenderer {
         sp.alpha = 0.3 + Math.min(1, Math.abs(t)) * 0.7;
       }
     };
-    paintAcc(this.accW, accWhite);
-    paintAcc(this.accB, accBlack);
+    if (this.accW) paintAcc(this.accW, accWhite);
+    if (this.accB) paintAcc(this.accB, accBlack);
 
     const paintU8 = (b: Block, data: Uint8Array, off: number) => {
       for (let i = 0; i < b.sprites.length; i++) {
@@ -509,16 +545,19 @@ export class FieldRenderer {
     const hi = this.highlight;
     g.clear();
     hi.clear();
-    if (!this.arch || !this.pairW || !this.pairB) return;
+    if (!this.arch) return;
     const arch = this.arch;
     const hov = this.selected ?? this.hover;
     const dim = hov ? 0.2 : 1;
 
     const whiteIsUs = f.sideToMove === 0;
+    // Returns null when that perspective is currently hidden, so edges which
+    // start in a block that is not on screen are simply not drawn.
     const pairPos = (i: number) => {
       const isUsHalf = i < arch.pair;
       const local = isUsHalf ? i : i - arch.pair;
-      const b = isUsHalf === whiteIsUs ? this.pairW! : this.pairB!;
+      const b = isUsHalf === whiteIsUs ? this.pairW : this.pairB;
+      if (!b) return null;
       return {
         x: b.x + (local % b.cols) * b.cell + b.cell / 2,
         y: b.y + Math.floor(local / b.cols) * b.cell + b.cell / 2,
@@ -612,6 +651,7 @@ export class FieldRenderer {
           const onPath = fL1.has(o) && (fPair.size === 0 || fPair.has(src));
           if (t < 0.06 && !onPath) continue;
           const p = pairPos(src);
+          if (!p) continue;
           const col = val >= 0 ? COL.pos : COL.neg;
           if (onPath) {
             hi.moveTo(p.x, p.y);
@@ -701,12 +741,14 @@ export class FieldRenderer {
     }
 
     // --- feature rays -----------------------------------------------------
-    if (this.accW && this.accB) {
+    {
+      // Draw rays into whichever accumulator blocks are visible.
+      const accBlocks = [this.accW, this.accB].filter(Boolean) as Block[];
       for (const feat of f.whiteFeatures) {
         const d = this.squares[feat.square];
         if (!d) continue;
         const onPath = fSquare === feat.square;
-        for (const b of [this.accW, this.accB]) {
+        for (const b of accBlocks) {
           const tx = b.x - 8;
           const ty = b.y + (b.rows * b.cell) / 2;
           if (onPath) {

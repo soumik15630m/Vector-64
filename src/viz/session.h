@@ -116,6 +116,9 @@ public:
   void step(); // advance one move while paused
   void set_move_delay(int ms);
   void set_nodes(int nodes);
+  // Applied between searches, never during one: set_threads reconfigures lazy
+  // SMP and is not safe to change under a running search.
+  void set_threads(int n);
   void new_game();
   // Analysis/Human: set the board. `moves` are long-algebraic from `fen`.
   bool set_position(const std::string &fen,
@@ -127,6 +130,10 @@ public:
   Snapshot snapshot() const;
   // Wait until the published sequence passes `have` (or `timeoutMs` elapses).
   Snapshot wait_for(uint64_t have, int timeoutMs) const;
+
+  // What this machine can actually run. The UI clamps its thread control to
+  // this instead of guessing a maximum.
+  static int hardware_threads();
 
   // The net the engine is using, for the inspector. Weights are immutable once
   // loaded, so this is safe to read while the worker searches.
@@ -162,6 +169,8 @@ private:
   std::atomic<bool> abortSearch_{false};
   std::atomic<int> moveDelayMs_{300};
   std::atomic<int> nodes_{20000};
+  std::atomic<int> threads_{1};
+  int appliedThreads_ = 1;
 
   // Board state, touched only by the worker thread except through commands.
   std::mutex cmdMu_;
