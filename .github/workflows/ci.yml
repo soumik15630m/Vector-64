@@ -307,8 +307,10 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_NATIVE=OFF
           cmake --build build --target test_viz -j
       - name: C++ <-> TypeScript wire contract
+        # The binary is built at the repo root; npm runs in ui/. Use an absolute
+        # path so working-directory cannot make one of them look in the wrong place.
         run: |
-          ./build/bin/test_viz fixture "$RUNNER_TEMP/frame.bin"
+          "$GITHUB_WORKSPACE/build/bin/test_viz" fixture "$RUNNER_TEMP/frame.bin"
           VIZ_FIXTURE="$RUNNER_TEMP/frame.bin" npm test
         working-directory: ui
 
