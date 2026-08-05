@@ -270,6 +270,14 @@ jobs:
         run: |
           $GITHUB_WORKSPACE/build/bin/test_viz frame
           $GITHUB_WORKSPACE/build/bin/test_viz session
+      # Both of these guard failures that are silent by nature: identical
+      # self-play games look like the engine working, and a resumed datagen run
+      # that regenerates its own games looks like a dataset. The portability
+      # matrix runs them via ctest, but a viz regression should fail here.
+      - name: Self-play varies and datagen shards resume cleanly
+        run: |
+          $GITHUB_WORKSPACE/build/bin/test_viz variety
+          $GITHUB_WORKSPACE/build/bin/test_viz shards
       - name: Stream, control surface, security posture, eval cross-check
         run: bash tools/viz_smoke.sh build/bin/ChessEngine-viz build/bin/ChessEngine-nnue
       - name: Tournament binaries stay dependency-free
