@@ -31,6 +31,24 @@
   --good: #4ade80;
   --bad: #f87171;
 
+  /* Board. Chessground ships brown, which fights a near-black panel and reads
+     as a different application bolted on. These are the same cool blues the
+     rest of the surface uses.
+
+     The squares are lifted deliberately: every move marker is drawn in
+     --board-ink, and these two values are chosen so that ink clears 5.17:1
+     against BOTH of them (WCAG 1.4.11 asks 3:1 for non-text indicators). A
+     mid-tone accent cannot do that -- cyan on a light square measures 1.07:1,
+     which is invisible -- so the ink carries the contrast and the accent rides
+     on top of it, where it reads at 9.88:1. */
+  --board-light: #c6d2e2;
+  --board-dark: #7d92ad;
+  --board-ink: #04222e;
+  /* Outline under the drawn shapes. Neutral near-black on purpose: --board-ink
+     is a teal and, spread under an amber arrow, it rimmed it in blue. */
+  --mark-shadow: rgba(7, 11, 16, 0.95);
+  --board-edge: #24304a;
+
   --r: 12px;
   --r-sm: 8px;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo,
@@ -464,8 +482,136 @@ input[type="text"]:focus {
   aspect-ratio: 1;
   border-radius: var(--r);
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: 1px solid var(--board-edge);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+
+/* --- chess board -------------------------------------------------------- */
+/* The squares are one repeating gradient rather than chessground's embedded
+   SVG: the pattern is 8x8 on a square element, so it scales exactly and costs
+   no asset. Highlights are the interface accent instead of chessground's
+   greens, so a last move reads as part of this UI rather than beside it. */
+.cg-wrap cg-board {
+  background-color: var(--board-light);
+  background-image: repeating-conic-gradient(
+    var(--board-dark) 0% 25%,
+    var(--board-light) 0% 50%
+  );
+  background-size: 25% 25%;
+}
+
+/* Move affordances are drawn as instrument marks rather than chessground's
+   filled blobs: a reticle for an empty destination, corner brackets framing a
+   capture.
+
+   State (last move, selection) is a tint plus a soft inset vignette. The tint
+   alone will not do it -- cyan over a light square shifts its lightness by
+   1.05, which is nothing -- but the obvious fix, a crisp dark rule around the
+   square, puts a hard black box on the board every single move. The vignette
+   gives the same delimiting edge without ever reading as a border. */
+.cg-wrap cg-board square.last-move {
+  background: rgba(77, 216, 255, 0.34);
+  box-shadow: inset 0 0 7px rgba(4, 34, 46, 0.45);
+}
+.cg-wrap cg-board square.selected {
+  background: rgba(77, 216, 255, 0.46);
+  box-shadow: inset 0 0 9px rgba(4, 34, 46, 0.5);
+}
+
+/* Empty destination: an accent core ringed in ink. The ink ring is what makes
+   it visible; the cyan is what makes it ours. */
+.cg-wrap cg-board square.move-dest {
+  background: radial-gradient(
+    circle,
+    rgba(77, 216, 255, 0.95) 0 9%,
+    var(--board-ink) 9.5% 15%,
+    rgba(0, 0, 0, 0) 15.5%
+  );
+}
+
+/* Capture: four corner brackets framing the piece, so the piece stays visible
+   and the mark says "this one" instead of covering it. Each bracket is an L of
+   two hairlines, hence eight layers; the ink halo under them is what clears
+   3:1 on a light square, where bare cyan would not. */
+.cg-wrap cg-board square.oc.move-dest {
+  --b: #4dd8ff;
+  background-image: linear-gradient(var(--b), var(--b)),
+    linear-gradient(var(--b), var(--b)), linear-gradient(var(--b), var(--b)),
+    linear-gradient(var(--b), var(--b)), linear-gradient(var(--b), var(--b)),
+    linear-gradient(var(--b), var(--b)), linear-gradient(var(--b), var(--b)),
+    linear-gradient(var(--b), var(--b));
+  background-repeat: no-repeat;
+  background-size:
+    26% 3px,
+    3px 26%,
+    26% 3px,
+    3px 26%,
+    26% 3px,
+    3px 26%,
+    26% 3px,
+    3px 26%;
+  background-position:
+    top 9% left 9%,
+    top 9% left 9%,
+    top 9% right 9%,
+    top 9% right 9%,
+    bottom 9% left 9%,
+    bottom 9% left 9%,
+    bottom 9% right 9%,
+    bottom 9% right 9%;
+  filter: drop-shadow(0 0 1px var(--mark-shadow))
+    drop-shadow(0 0 1px var(--mark-shadow));
+}
+
+.cg-wrap cg-board square.move-dest:hover,
+.cg-wrap cg-board square.oc.move-dest:hover {
+  background: rgba(77, 216, 255, 0.32);
+  box-shadow: inset 0 0 8px rgba(4, 34, 46, 0.45);
+  filter: none;
+}
+/* Check is the one mark that must not be mistaken for anything else, so it
+   keeps its red -- but red on a blue board measures under 2:1 on its own, so
+   the ink ring is what actually delimits it. */
+.cg-wrap cg-board square.check {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(230, 70, 70, 0.95) 0%,
+    rgba(200, 30, 30, 0.7) 38%,
+    rgba(190, 40, 40, 0) 80%
+  );
+}
+.cg-wrap cg-board square.premove-dest,
+.cg-wrap cg-board square.current-premove {
+  background-color: rgba(255, 181, 69, 0.4);
+  box-shadow: inset 0 0 7px rgba(4, 34, 46, 0.45);
+}
+
+/* The engine's intent arrow is an SVG chessground draws with a flat brush
+   colour -- no stroke of its own. This halo gives it one, so a cyan arrow
+   stays delimited as it crosses a light square. */
+.cg-wrap svg.cg-shapes,
+.cg-wrap svg.cg-custom-svgs {
+  filter: drop-shadow(0 0 1px var(--mark-shadow))
+    drop-shadow(0 0 1px var(--mark-shadow));
+}
+
+/* Coordinates sit ON the squares, so each takes the opposite square's colour
+   to stay readable. */
+.orientation-white .ranks :nth-child(odd),
+.orientation-white .files :nth-child(even),
+.orientation-black .ranks :nth-child(even),
+.orientation-black .files :nth-child(odd),
+coords.squares:nth-of-type(odd) :nth-child(even),
+coords.squares:nth-of-type(even) :nth-child(odd) {
+  color: rgba(20, 29, 43, 0.72);
+}
+.orientation-white .ranks :nth-child(even),
+.orientation-white .files :nth-child(odd),
+.orientation-black .ranks :nth-child(odd),
+.orientation-black .files :nth-child(even),
+coords.squares:nth-of-type(odd) :nth-child(odd),
+coords.squares:nth-of-type(even) :nth-child(even) {
+  color: rgba(243, 247, 252, 0.82);
 }
 
 /* --- neuron field ------------------------------------------------------ */

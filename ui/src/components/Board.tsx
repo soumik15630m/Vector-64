@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Chessground } from "chessground";
 import type { Api } from "chessground/api";
+import type { DrawBrushes } from "chessground/draw";
 import type { Key } from "chessground/types";
 import type { EngineState } from "../engine/types";
 
@@ -16,6 +17,34 @@ interface Props {
  * legal-move list -- the UI never computes legality itself, so what you can
  * play is exactly what the engine accepts.
  */
+/**
+ * The engine's intended move. lineWidth is chessground's own unit (a square is
+ * 10), so 5 is half a square -- a pointer, not a bar across the board, and the
+ * arrowhead scales with it so a thinner line also gives a sharper head.
+ *
+ * Amber rather than the interface accent, and that is the whole point: the
+ * board is blue, the last move is cyan and so is the eval bar, so a cyan arrow
+ * would be one more blue thing on a blue board. --pos is the theme's other
+ * principal colour -- the neuron field already reads it as "positive" -- so
+ * the board ends up saying cyan for what has happened and amber for what the
+ * engine intends next.
+ *
+ * Near-opaque on purpose: chessground's stock arrows are translucent navy,
+ * which over a light square leaves neither the arrow nor the square legible.
+ * No mid-tone hue clears 3:1 against both square colours, so what actually
+ * delimits the arrow is the ink halo theme.css puts under the shape layer.
+ */
+const INTENT_BRUSHES: DrawBrushes = {
+  intent: { key: "vi", color: "#ffb545", opacity: 0.92, lineWidth: 5 },
+  // chessground requires its four standard brushes. Nothing draws with them
+  // here, but leaving the stock colours in would let a default arrow appear in
+  // a palette this UI never uses.
+  green: { key: "vg", color: "#4ade80", opacity: 0.9, lineWidth: 5 },
+  red: { key: "vr", color: "#f87171", opacity: 0.9, lineWidth: 5 },
+  blue: { key: "vb", color: "#4a90ff", opacity: 0.9, lineWidth: 5 },
+  yellow: { key: "vy", color: "#ffb545", opacity: 0.9, lineWidth: 5 },
+};
+
 export function Board({ state, highlight, onMove }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const api = useRef<Api | null>(null);
@@ -28,7 +57,14 @@ export function Board({ state, highlight, onMove }: Props) {
       coordinates: false,
       animation: { enabled: true, duration: 180 },
       movable: { free: false, color: undefined, dests: new Map() },
-      drawable: { enabled: false, autoShapes: [] },
+      drawable: {
+        enabled: false,
+        autoShapes: [],
+        // Chessground's stock arrows are thick and navy -- they read as a
+        // separate application drawn over the board. This one is the interface
+        // accent, thin enough to point without hiding the squares it crosses.
+        brushes: INTENT_BRUSHES,
+      },
       highlight: { lastMove: true, check: true },
     });
     return () => {
@@ -67,7 +103,7 @@ export function Board({ state, highlight, onMove }: Props) {
             {
               orig: intend.slice(0, 2) as Key,
               dest: intend.slice(2, 4) as Key,
-              brush: "paleBlue",
+              brush: "intent",
             },
           ]
         : [];
@@ -78,7 +114,7 @@ export function Board({ state, highlight, onMove }: Props) {
         last && last.length >= 4
           ? [last.slice(0, 2) as Key, last.slice(2, 4) as Key]
           : undefined,
-      drawable: { enabled: false, autoShapes: shapes },
+      drawable: { enabled: false, autoShapes: shapes, brushes: INTENT_BRUSHES },
       movable: {
         free: false,
         color: humanTurn
