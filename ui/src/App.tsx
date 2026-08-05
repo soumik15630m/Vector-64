@@ -110,7 +110,9 @@ export default function App() {
   // Seek: replay the game up to that ply in analysis mode, so the board AND the
   // network show the position as it was, not just the board.
   const seekTo = (ply: number) => {
-    if (!state) return;
+    // Seeking switches to analysis mode, which would abandon the game being
+    // recorded, so it is off while a datagen run is going.
+    if (!state || state.datagen.running) return;
     send({ cmd: "mode", value: "analysis" });
     send({
       cmd: "position",

@@ -182,7 +182,13 @@ export function Ablation({
     return out;
   }, [s.game.fen]);
 
+  // Ablation moves the board into analysis mode, which would abandon the game
+  // being recorded. The engine refuses it while a run is going; not offering it
+  // is the honest version of the same rule.
+  const locked = s.datagen.running;
+
   const ablate = (square: string) => {
+    if (locked) return;
     const c = new Chess();
     try {
       c.load(s.game.fen);
@@ -197,7 +203,7 @@ export function Ablation({
   };
 
   const restore = () => {
-    if (!baseline) return;
+    if (locked || !baseline) return;
     send({ cmd: "position", fen: baseline.fen, moves: [] });
     setRemoved(null);
     setBaseline(null);

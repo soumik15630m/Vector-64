@@ -112,6 +112,7 @@ std::string encode_state(const Snapshot &s) {
     const DatagenConfig dd;
     h["datagenDefaults"] = {{"out", dd.out},
                             {"targetPositions", dd.targetPositions},
+                            {"targetGames", dd.targetGames},
                             {"nodes", dd.nodes},
                             {"depth", dd.depth},
                             {"skipPlies", dd.skipPlies},
@@ -120,6 +121,7 @@ std::string encode_state(const Snapshot &s) {
                             {"balance", dd.balance},
                             {"varietyCp", dd.varietyCp},
                             {"varietyPlies", dd.varietyPlies},
+                            {"shardPositions", dd.shardPositions},
                             {"lam", dd.lam},
                             {"seed", dd.seed},
                             {"emit", dd.raw ? "raw" : "blend"}};
@@ -130,11 +132,14 @@ std::string encode_state(const Snapshot &s) {
                   {"positions", s.datagen.positions},
                   {"games", s.datagen.games},
                   {"target", s.datagen.target},
+                  {"targetGames", s.datagen.targetGames},
                   {"wins", s.datagen.wins},
                   {"draws", s.datagen.draws},
                   {"losses", s.datagen.losses},
                   {"positionsPerSec", s.datagen.positionsPerSec},
-                  {"etaMinutes", s.datagen.etaMinutes}};
+                  {"etaMinutes", s.datagen.etaMinutes},
+                  {"shard", s.datagen.shard},
+                  {"shardPath", s.datagen.shardPath}};
 
   h["compare"] = s.compareActive
                      ? json{{"active", true},
@@ -250,6 +255,16 @@ std::string handle_control(Session &session, const std::string &body,
     return reject("missing 'cmd'");
 
   const std::string cmd = j["cmd"].get<std::string>();
+
+  // A dataset built from shifting settings is not one dataset. While a run is
+  // going, refuse everything that would change how the rows are produced or
+  // throw away the game being recorded -- only pausing, resuming and stopping
+  // stay live. The UI greys these out, but the rule belongs here: a stale tab,
+  // a second browser or a stray curl must not be able to corrupt a run that has
+  // been going for days.
+  if (cmd != "pause" && cmd != "datagen" && session.snapshot().datagen.running)
+    return reject("locked while generating data: stop the run first");
+
   const auto intVal = [&](int def) {
     return j.contains("value") && j["value"].is_number_integer()
                ? j["value"].get<int>()
@@ -299,6 +314,10 @@ std::string handle_control(Session &session, const std::string &body,
                   {"games", st.games}}
           .dump();
     } else {
+      // Starting includes resuming a crashed run, and neither makes sense on
+      // top of a live one.
+      if (session.snapshot().datagen.running)
+        return reject("a run is already going: stop it first");
       DatagenConfig dg;
       dg.out = out;
       const auto num = [&](const char *k, auto def) {
@@ -308,6 +327,7 @@ std::string handle_control(Session &session, const std::string &body,
       // Anything the client omits falls back to the engine's own default.
       const DatagenConfig dd;
       dg.targetPositions = num("targetPositions", dd.targetPositions);
+      dg.targetGames = num("targetGames", dd.targetGames);
       dg.nodes = num("nodes", dd.nodes);
       dg.depth = num("depth", dd.depth);
       dg.skipPlies = num("skipPlies", dd.skipPlies);
@@ -316,6 +336,7 @@ std::string handle_control(Session &session, const std::string &body,
       dg.balance = num("balance", dd.balance);
       dg.varietyCp = num("varietyCp", dd.varietyCp);
       dg.varietyPlies = num("varietyPlies", dd.varietyPlies);
+      dg.shardPositions = num("shardPositions", dd.shardPositions);
       dg.lam = num("lam", dd.lam);
       dg.seed = static_cast<uint64_t>(num("seed", int{12345}));
       dg.raw = !(j.contains("emit") && j["emit"].is_string() &&

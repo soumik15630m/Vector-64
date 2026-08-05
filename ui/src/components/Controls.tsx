@@ -290,6 +290,7 @@ export function Controls({ s, send }: Props) {
           min={0}
           max={100}
           step={5}
+          disabled={locked}
           value={variety}
           title={
             "Opening variety. The engine picks at random among the root moves " +
@@ -339,6 +340,7 @@ export function Controls({ s, send }: Props) {
           <textarea
             className="pos-input"
             placeholder="paste a FEN or a PGN, then press Enter"
+            disabled={locked}
             value={fen}
             onChange={(e) => {
               setFen(e.currentTarget.value);

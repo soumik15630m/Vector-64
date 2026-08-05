@@ -25,6 +25,7 @@ export function DatagenPanel({
   const def = s.datagenDefaults;
   const [out, setOut] = useState(def.out);
   const [target, setTarget] = useState(String(def.targetPositions));
+  const [targetGames, setTargetGames] = useState(String(def.targetGames));
   const [nodes, setNodes] = useState(String(def.nodes));
   const [depth, setDepth] = useState(String(def.depth));
   const [emit, setEmit] = useState<"raw" | "blend">(def.emit);
@@ -33,6 +34,9 @@ export function DatagenPanel({
   const [maxPlies, setMaxPlies] = useState(String(def.maxPlies));
   const [openingPlies, setOpeningPlies] = useState(String(def.openingPlies));
   const [balance, setBalance] = useState(String(def.balance));
+  const [shardPositions, setShardPositions] = useState(
+    String(def.shardPositions),
+  );
   const [seed, setSeed] = useState(String(def.seed));
   const [more, setMore] = useState(false);
   const [found, setFound] = useState<{ positions: number; games: number } | null>(
@@ -69,6 +73,7 @@ export function DatagenPanel({
       action: "start",
       out: out.trim(),
       targetPositions: Math.max(1, num(target, def.targetPositions, 1)),
+      targetGames: num(targetGames, def.targetGames),
       nodes: Math.max(1, num(nodes, def.nodes, 1)),
       depth: Math.min(s.maxDepth, num(depth, def.depth)),
       emit,
@@ -78,6 +83,7 @@ export function DatagenPanel({
       openingPlies: num(openingPlies, def.openingPlies),
       balance: num(balance, def.balance),
       seed: num(seed, def.seed),
+      shardPositions: num(shardPositions, def.shardPositions),
       resume,
     });
 
@@ -102,7 +108,9 @@ export function DatagenPanel({
         </div>
         <div className="row">
           <span className="k">games</span>
-          <span className="v num">{n(d.games)}</span>
+          <span className="v num">
+            {d.targetGames > 0 ? `${n(d.games)} / ${n(d.targetGames)}` : n(d.games)}
+          </span>
         </div>
         <div className="row">
           <span className="k">rate</span>
@@ -122,9 +130,15 @@ export function DatagenPanel({
           </span>
         </div>
         <div className="row">
-          <span className="k">file</span>
+          <span className="k">shard</span>
           <span className="v num" style={{ fontSize: 10 }}>
-            {d.out.split(/[/\\]/).pop()}
+            {d.shardPath ? d.shardPath.split(/[/\\]/).pop() : "—"}
+          </span>
+        </div>
+        <div className="row">
+          <span className="k">dataset</span>
+          <span className="v num" style={{ fontSize: 10 }}>
+            {d.out.split(/[/\\]/).filter(Boolean).pop()}
           </span>
         </div>
         <div className="controls" style={{ marginTop: 8 }}>
@@ -153,7 +167,7 @@ export function DatagenPanel({
       <h3>
         Datagen <i>native generator</i>
       </h3>
-      <label className="lbl">output file</label>
+      <label className="lbl">output directory</label>
       <input
         type="text"
         value={out}
@@ -167,6 +181,16 @@ export function DatagenPanel({
             type="text"
             value={target}
             onChange={(e) => setTarget(e.currentTarget.value)}
+          />
+        </div>
+        <div>
+          <label className="lbl">target games</label>
+          <input
+            className="numbox"
+            type="text"
+            value={targetGames}
+            title="stop after this many games as well; 0 = only the position target"
+            onChange={(e) => setTargetGames(e.currentTarget.value)}
           />
         </div>
         <div>
@@ -200,6 +224,7 @@ export function DatagenPanel({
             onClick={() => {
               setOut(def.out);
               setTarget(String(def.targetPositions));
+              setTargetGames(String(def.targetGames));
               setNodes(String(def.nodes));
               setDepth(String(def.depth));
               setEmit(def.emit);
@@ -208,6 +233,7 @@ export function DatagenPanel({
               setMaxPlies(String(def.maxPlies));
               setOpeningPlies(String(def.openingPlies));
               setBalance(String(def.balance));
+              setShardPositions(String(def.shardPositions));
               setSeed(String(def.seed));
             }}
           >
@@ -282,6 +308,16 @@ export function DatagenPanel({
               value={balance}
               title="reject an opening more lopsided than this"
               onChange={(e) => setBalance(e.currentTarget.value)}
+            />
+          </div>
+          <div>
+            <label className="lbl">rows / shard</label>
+            <input
+              className="numbox"
+              type="text"
+              value={shardPositions}
+              title="rows per shard_NNNN.txt file; 0 writes one big file"
+              onChange={(e) => setShardPositions(e.currentTarget.value)}
             />
           </div>
           <div>

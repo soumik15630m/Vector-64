@@ -1,6 +1,7 @@
 #ifndef VIZ_SESSION_H
 #define VIZ_SESSION_H
 
+#include "../datagen/selfplay.h"
 #include "../search/search.h"
 #include "probe.h"
 
@@ -38,8 +39,16 @@ enum class Mode {
 // rather than replacing it. Shipping these means a run started without touching
 // anything produces a dataset of the usual shape.
 struct DatagenConfig {
-  std::string out = "data/selfplay.txt"; // appended to when resuming
-  int64_t targetPositions = 500000000;   // 500M
+  // The dataset DIRECTORY. Rows go to numbered shards inside it
+  // (shard_0000.txt, shard_0001.txt, ...) -- the layout the training pipeline
+  // globs, and the only sane way to hold 500M positions (~45 GB).
+  std::string out = "data/selfplay";
+  int64_t targetPositions = 500000000; // 500M
+  // Optional second stop condition: finish after this many games even if the
+  // position target is not reached. 0 = no game cap, positions decide. The CLI
+  // is games-driven (--games), a dataset is positions-driven, so both are here
+  // and whichever is reached first ends the run.
+  int64_t targetGames = 0;
   int nodes = 5000;
   int depth = 9;      // 0 = node-limited only
   int skipPlies = 12; // opening plies to leave unlabelled
@@ -51,6 +60,10 @@ struct DatagenConfig {
   // the same opening always produces the same game.
   int varietyCp = 30;
   int varietyPlies = 16;
+  // Rows per shard. ~5M rows is ~400 MB of text, so a 500M run lands around a
+  // hundred shards -- small enough to copy or convert one at a time. 0 writes
+  // a single file at `out` instead.
+  int64_t shardPositions = 5000000;
   double lam = 0.5;
   bool raw = true; // raw = fen|eval|wdl (bullet-native); false = fen|blended cp
   uint64_t seed = 12345;
@@ -63,12 +76,16 @@ struct DatagenState {
   int64_t positions = 0;
   int64_t games = 0;
   int64_t target = 0;
+  int64_t targetGames = 0;
   int wins = 0, draws = 0, losses = 0;
   double positionsPerSec = 0.0;
   double etaMinutes = 0.0;
   // A previous run's state file was found and can be continued.
   bool resumable = false;
   int64_t resumablePositions = 0;
+  // Which shard rows are landing in, and where, for the progress display.
+  int shard = 0;
+  std::string shardPath;
 };
 
 // Random-opening length when one is requested but the config asks for none
@@ -322,12 +339,11 @@ private:
 
   // --- data generation -------------------------------------------------
   DatagenConfig dgCfg_;
-  std::ofstream dgOut_;
+  Datagen::ShardWriter dgOut_;
   std::mutex dgMu_;
   DatagenState dgState_;
   std::chrono::steady_clock::time_point dgStart_{};
   int64_t dgStartPositions_ = 0;
-  std::mt19937_64 dgRng_{12345};
   // Rows for the game in progress; banked when it ends.
   std::vector<std::pair<std::string, int>> dgRecord_;
 };

@@ -370,6 +370,10 @@ add_test(NAME "viz.session_selfplay" COMMAND test_viz session)
 # shows up as "why is every game the same?". Random openings hide it, so this
 # runs with them off.
 add_test(NAME "viz.selfplay_variety" COMMAND test_viz variety)
+# Rows are written as numbered shards, which is what the training pipeline
+# globs; a resumed run must continue the sequence without a gap and without
+# regenerating the games it resumed past (which would duplicate rows).
+add_test(NAME "viz.datagen_shards" COMMAND test_viz shards)
 # The wire format is binary: a renamed field would fail silently at runtime, so
 # the encoder must keep producing something the UI decoder understands. CI pairs
 # this with the TypeScript side (see the viz-ui job).

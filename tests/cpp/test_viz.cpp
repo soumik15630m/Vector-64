@@ -14,8 +14,10 @@
 #include "viz/session.h"
 #include "viz/wire.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -281,6 +283,106 @@ bool variety_test() {
   return true;
 }
 
+// A dataset is written as numbered shards, and a resumed run continues the last
+// one instead of restarting the sequence or regenerating games it already has.
+//
+// The regeneration part is the subtle half: openings and root-move variety are
+// drawn from one stream, so a resume that restarts that stream replays the very
+// games it resumed past and quietly fills the dataset with duplicate rows.
+bool datagen_shard_test() {
+  namespace fs = std::filesystem;
+  const fs::path dir = fs::temp_directory_path() / "stk_viz_shard_test";
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+
+  Viz::DatagenConfig dg;
+  dg.out = dir.string();
+  dg.nodes = 250;
+  dg.depth = 0;
+  dg.maxPlies = 30;
+  dg.skipPlies = 4;
+  dg.shardPositions = 120;
+  dg.targetPositions = 700;
+
+  // Run, stop, then resume into the same directory with a bigger target.
+  const auto drive = [&](bool resume, int64_t target) {
+    Viz::Config cfg;
+    cfg.nodes = 250;
+    cfg.moveDelayMs = 0;
+    cfg.hashMb = 8;
+    Viz::Session session(cfg);
+    dg.targetPositions = target;
+    if (!session.start_datagen(dg, resume))
+      return false;
+    session.start();
+    const auto t0 = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - t0 < std::chrono::seconds(60)) {
+      if (!session.snapshot().datagen.running)
+        break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    session.stop_datagen();
+    session.stop();
+    return true;
+  };
+  if (!drive(false, 400) || !drive(true, 700)) {
+    std::printf("FAIL: could not start datagen in %s\n", dir.string().c_str());
+    return false;
+  }
+
+  std::vector<fs::path> shards;
+  for (const auto &e : fs::directory_iterator(dir))
+    if (e.path().filename().string().rfind("shard_", 0) == 0)
+      shards.push_back(e.path());
+  std::sort(shards.begin(), shards.end());
+  if (shards.size() < 3) {
+    std::printf("FAIL: expected several shards, found %zu\n", shards.size());
+    return false;
+  }
+
+  std::set<std::string> fens;
+  int64_t rows = 0;
+  for (size_t i = 0; i < shards.size(); ++i) {
+    // The numbering must have no gaps, or the training pipeline silently
+    // trains on a subset of what was generated.
+    char want[32];
+    std::snprintf(want, sizeof(want), "shard_%04zu.txt", i);
+    if (shards[i].filename().string() != want) {
+      std::printf("FAIL: shard sequence has a gap at %s\n", want);
+      return false;
+    }
+    std::ifstream in(shards[i]);
+    std::string line;
+    int64_t n = 0;
+    while (std::getline(in, line)) {
+      if (line.empty())
+        continue;
+      ++n;
+      ++rows;
+      fens.insert(line.substr(0, line.find('|')));
+    }
+    // Every shard but the last holds exactly the requested number of rows.
+    if (i + 1 < shards.size() && n != dg.shardPositions) {
+      std::printf("FAIL: %s has %lld rows, expected %lld\n",
+                  shards[i].filename().string().c_str(),
+                  static_cast<long long>(n),
+                  static_cast<long long>(dg.shardPositions));
+      return false;
+    }
+  }
+  if (static_cast<int64_t>(fens.size()) != rows) {
+    std::printf("FAIL: %lld rows but only %zu unique positions -- the resumed "
+                "run regenerated games it already had\n",
+                static_cast<long long>(rows), fens.size());
+    return false;
+  }
+  fs::remove_all(dir, ec);
+  std::printf("PASS: datagen shards (%zu files, %lld rows, all unique across "
+              "the resume boundary)\n",
+              shards.size(), static_cast<long long>(rows));
+  return true;
+}
+
 } // namespace
 
 // Emit one encoded state message so the TypeScript decoder can be checked
@@ -359,6 +461,8 @@ int main(int argc, char **argv) {
     return session_test() ? 0 : 1;
   if (which == "variety")
     return variety_test() ? 0 : 1;
+  if (which == "shards")
+    return datagen_shard_test() ? 0 : 1;
 
   // Deterministic synthetic weights: exercises the full pipeline without
   // depending on a 46 MB net file being present.

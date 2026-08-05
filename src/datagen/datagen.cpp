@@ -43,6 +43,11 @@ struct Params {
   int skipPlies = 12;
   int openingPlies = 8;
   int balance = 150; // max |white-black material| for an opening (cp)
+  // Rows per shard. 0 (the default) writes one file at --out, which is what a
+  // single fixed-size run wants. Set it and --out becomes a DIRECTORY of
+  // shard_0000.txt, shard_0001.txt, ... -- the layout the training pipeline
+  // globs, and what the visualizer's datagen mode writes.
+  int64_t shardPositions = 0;
   double lam = 0.5;
   bool raw = true; // fen | eval | wdl (bullet-native); false = fen | cp (blend)
   uint64_t seed = 0;
@@ -54,7 +59,7 @@ struct Params {
 // visualizer's datagen mode so the two write identical rows.
 
 struct Shared {
-  std::ofstream out;
+  ShardWriter out;
   std::mutex mu;
   std::atomic<int> started{0};
   std::atomic<int64_t> games{0}, positions{0}, w{0}, d{0}, l{0};
@@ -82,7 +87,7 @@ void worker(const Params &p, Shared &sh) {
       return;
     std::lock_guard<std::mutex> lk(sh.mu);
     for (const std::string &s : buf)
-      sh.out << s << '\n';
+      sh.out.write_row(s);
     sh.positions.fetch_add(int64_t(buf.size()));
     buf.clear();
   };
@@ -170,6 +175,8 @@ int run(int argc, char **argv) {
       p.skipPlies = std::stoi(next_arg(argc, argv, i));
     else if (a == "--opening-plies")
       p.openingPlies = std::stoi(next_arg(argc, argv, i));
+    else if (a == "--shard-positions")
+      p.shardPositions = std::stoll(next_arg(argc, argv, i));
     else if (a == "--balance")
       p.balance = std::stoi(next_arg(argc, argv, i));
     else if (a == "--lam")
@@ -193,8 +200,7 @@ int run(int argc, char **argv) {
     p.threads = 1;
 
   Shared sh;
-  sh.out.open(p.out, std::ios::binary);
-  if (!sh.out) {
+  if (!sh.out.open(p.out, p.shardPositions, /*resume=*/false)) {
     std::cerr << "datagen: cannot open output '" << p.out << "'\n";
     return 2;
   }
@@ -204,6 +210,9 @@ int run(int argc, char **argv) {
   std::cout << "[datagen] " << p.games << " games @ " << p.nodes
             << " nodes / depth " << p.depth << ", " << p.threads
             << " threads, emit=" << (p.raw ? "raw" : "blend")
+            << (p.shardPositions > 0
+                    ? ", shards of " + std::to_string(p.shardPositions)
+                    : std::string())
             << (p.net.empty() ? "" : (", net=" + p.net)) << '\n'
             << std::flush;
 
@@ -239,7 +248,6 @@ int run(int argc, char **argv) {
     }
   }
   joiner.join();
-  sh.out.flush();
   sh.out.close();
 
   const double el =

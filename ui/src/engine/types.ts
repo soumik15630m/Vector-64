@@ -108,17 +108,28 @@ export interface DatagenState {
   positions: number;
   games: number;
   target: number;
+  /** Game cap, or 0 when only the position target applies. */
+  targetGames: number;
   wins: number;
   draws: number;
   losses: number;
   positionsPerSec: number;
   etaMinutes: number;
+  /**
+   * Rows are written as numbered shards inside the dataset directory, which is
+   * what the training pipeline globs and what keeps any one file small enough
+   * to move around. `shard` is the index being filled, `shardPath` its file.
+   */
+  shard: number;
+  shardPath: string;
 }
 
 /** Everything that shapes the dataset. No pacing knobs: datagen runs flat out. */
 export interface DatagenOptions {
   out: string;
   targetPositions: number;
+  /** Stop after this many games too; 0 = only the position target decides. */
+  targetGames: number;
   nodes: number;
   depth: number;
   emit: "raw" | "blend";
@@ -128,6 +139,8 @@ export interface DatagenOptions {
   openingPlies: number;
   balance: number;
   seed: number;
+  /** Rows per shard file; 0 writes a single file at `out`. */
+  shardPositions: number;
   resume?: boolean;
 }
 
@@ -135,6 +148,7 @@ export interface DatagenOptions {
 export interface DatagenDefaults {
   out: string;
   targetPositions: number;
+  targetGames: number;
   nodes: number;
   depth: number;
   emit: "raw" | "blend";
@@ -143,6 +157,8 @@ export interface DatagenDefaults {
   maxPlies: number;
   openingPlies: number;
   balance: number;
+  /** Rows per shard file; 0 writes a single file. */
+  shardPositions: number;
   seed: number;
 }
 

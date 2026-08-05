@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 
 namespace Viz {
 namespace {
@@ -254,7 +255,9 @@ namespace {
 // The state file sits beside the dataset so a resumed run finds it without
 // being told where it is.
 std::string state_path_for(const std::string &out) {
-  return out + ".state.json";
+  // Inside the dataset directory, beside the shards it describes, so a resumed
+  // run finds it from the same path the user typed.
+  return (std::filesystem::path(out) / "state.json").string();
 }
 } // namespace
 
@@ -278,6 +281,7 @@ DatagenState Session::probe_datagen(const std::string &out) {
   };
   st.resumablePositions = grab("\"positions\"");
   st.games = grab("\"games\"");
+  st.shard = static_cast<int>(grab("\"shard\""));
   st.resumable = st.resumablePositions > 0 || st.games > 0;
   return st;
 }
@@ -285,20 +289,19 @@ DatagenState Session::probe_datagen(const std::string &out) {
 bool Session::start_datagen(const DatagenConfig &cfg, bool resume) {
   if (cfg.out.empty())
     return false;
+  uint64_t seed = 0;
   {
     std::lock_guard<std::mutex> lk(dgMu_);
     dgOut_.close();
-    dgOut_.clear();
-    // Resuming appends to the existing dataset; a fresh run truncates it, so a
-    // restart cannot silently double-count rows already on disk.
-    dgOut_.open(cfg.out,
-                std::ios::binary | (resume ? std::ios::app : std::ios::trunc));
-    if (!dgOut_)
+    // Resuming continues the last shard; a fresh run starts at shard 0 and
+    // truncates, so a restart cannot silently double-count rows on disk.
+    if (!dgOut_.open(cfg.out, cfg.shardPositions, resume))
       return false;
     dgCfg_ = cfg;
     dgState_ = DatagenState{};
     dgState_.out = cfg.out;
     dgState_.target = cfg.targetPositions;
+    dgState_.targetGames = cfg.targetGames;
     if (resume) {
       const DatagenState prev = probe_datagen(cfg.out);
       dgState_.positions = prev.resumablePositions;
@@ -311,13 +314,17 @@ bool Session::start_datagen(const DatagenConfig &cfg, bool resume) {
     nodes_.store(std::max(0, cfg.nodes));
     depth_.store(std::clamp(cfg.depth, 0, max_depth()));
     dgStart_ = std::chrono::steady_clock::now();
-    // Offset the seed by the work already done so a resumed run does not
-    // regenerate the same games it already has.
-    dgRng_.seed(cfg.seed + 0x9E3779B97F4A7C15ULL *
-                               static_cast<uint64_t>(dgState_.games + 1));
+    seed = cfg.seed +
+           0x9E3779B97F4A7C15ULL * static_cast<uint64_t>(dgState_.games + 1);
   }
   {
     std::lock_guard<std::mutex> lk(cmdMu_);
+    // Take the run's seed, offset by the games already on disk. rngState_ is
+    // the stream openings and root-move variety are drawn from, so without
+    // this a run ignored its seed entirely and -- worse -- a resumed run
+    // restarted the stream and regenerated the very games it was resuming
+    // past, duplicating rows in the dataset.
+    rngState_ = seed ? seed : 0x9E3779B97F4A7C15ULL;
     mode_ = Mode::Datagen;
     pendingReset_ = true;
     pendingRandomOpening_ = true; // datagen always wants varied openings
@@ -331,10 +338,7 @@ bool Session::start_datagen(const DatagenConfig &cfg, bool resume) {
 
 void Session::stop_datagen() {
   std::lock_guard<std::mutex> lk(dgMu_);
-  if (dgOut_.is_open()) {
-    dgOut_.flush();
-    dgOut_.close();
-  }
+  dgOut_.close();
   dgState_.running = false;
 }
 
@@ -346,7 +350,9 @@ void Session::datagen_save_state() {
   st << "{\n  \"positions\": " << dgState_.positions
      << ",\n  \"games\": " << dgState_.games
      << ",\n  \"target\": " << dgState_.target
-     << ",\n  \"nodes\": " << dgCfg_.nodes << "\n}\n";
+     << ",\n  \"nodes\": " << dgCfg_.nodes
+     << ",\n  \"shard\": " << dgOut_.shard()
+     << ",\n  \"shardPositions\": " << dgCfg_.shardPositions << "\n}\n";
 }
 
 void Session::datagen_write(const std::vector<std::pair<std::string, int>> &rec,
@@ -355,11 +361,12 @@ void Session::datagen_write(const std::vector<std::pair<std::string, int>> &rec,
   if (!dgOut_.is_open())
     return;
   for (const auto &pr : rec)
-    dgOut_ << Datagen::emit_row(pr.first, pr.second, wdl, dgCfg_.raw,
-                                dgCfg_.lam)
-           << '\n';
+    dgOut_.write_row(
+        Datagen::emit_row(pr.first, pr.second, wdl, dgCfg_.raw, dgCfg_.lam));
   dgOut_.flush();
   dgState_.positions += static_cast<int64_t>(rec.size());
+  dgState_.shard = dgOut_.shard();
+  dgState_.shardPath = dgOut_.current_path();
   ++dgState_.games;
   if (wdl == 1.0)
     ++dgState_.wins;
@@ -888,12 +895,11 @@ void Session::datagen_step() {
     std::lock_guard<std::mutex> lk(dgMu_);
     if (!dgState_.running)
       return;
-    if (dgState_.positions >= dgState_.target) {
+    // Whichever limit is reached first ends the run.
+    if (dgState_.positions >= dgState_.target ||
+        (dgState_.targetGames > 0 && dgState_.games >= dgState_.targetGames)) {
       dgState_.running = false;
-      if (dgOut_.is_open()) {
-        dgOut_.flush();
-        dgOut_.close();
-      }
+      dgOut_.close();
       publish_needed_ = true;
       return;
     }
