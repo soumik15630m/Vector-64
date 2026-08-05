@@ -33,16 +33,21 @@ enum class Mode {
 // Data generation settings. The rows written are produced by the SAME helpers
 // the CLI datagen uses (src/datagen/selfplay.h), so a dataset built here is
 // byte-compatible with one built by `ChessEngine datagen`.
+// Defaults follow what Stockfish uses for its foundational NNUE data: depth 9
+// with a 5000-node ceiling, so the node cap bounds a shallow-depth search
+// rather than replacing it. Shipping these means a run started without touching
+// anything produces a dataset of the usual shape.
 struct DatagenConfig {
-  std::string out; // output file; appended to when resuming
-  int64_t targetPositions = 1000000;
-  int nodes = 6000;
+  std::string out = "data/selfplay.txt"; // appended to when resuming
+  int64_t targetPositions = 500000000;   // 500M
+  int nodes = 5000;
+  int depth = 9;      // 0 = node-limited only
   int skipPlies = 12; // opening plies to leave unlabelled
   int maxPlies = 200;
   int openingPlies = 8; // datagen always uses random balanced openings
   int balance = 150;
   double lam = 0.5;
-  bool raw = true; // raw = fen|eval|wdl; false = fen|blended cp
+  bool raw = true; // raw = fen|eval|wdl (bullet-native); false = fen|blended cp
   uint64_t seed = 12345;
 };
 

@@ -264,6 +264,10 @@ bool Session::start_datagen(const DatagenConfig &cfg, bool resume) {
     }
     dgState_.running = true;
     dgStartPositions_ = dgState_.positions;
+    // The run owns the search budget for its duration; the UI locks these, so
+    // every row in the dataset is produced under the same settings.
+    nodes_.store(std::max(0, cfg.nodes));
+    depth_.store(std::clamp(cfg.depth, 0, max_depth()));
     dgStart_ = std::chrono::steady_clock::now();
     // Offset the seed by the work already done so a resumed run does not
     // regenerate the same games it already has.

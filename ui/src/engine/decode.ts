@@ -98,6 +98,12 @@ export function decodeState(buf: ArrayBuffer): EngineState {
     // offering a slider that runs to a made-up maximum.
     hardwareThreads: header.hardwareThreads ?? header.threads ?? 1,
     maxDepth: header.maxDepth ?? 64,
+    // Falls back only if talking to an engine that predates the field.
+    datagenDefaults: header.datagenDefaults ?? {
+      out: "data/selfplay.txt", targetPositions: 500000000, nodes: 5000,
+      depth: 9, emit: "raw", lam: 0.5, skipPlies: 12, maxPlies: 200,
+      openingPlies: 8, balance: 150, seed: 12345,
+    },
     datagen: header.datagen ?? {
       running: false, out: "", positions: 0, games: 0, target: 0,
       wins: 0, draws: 0, losses: 0, positionsPerSec: 0, etaMinutes: 0,

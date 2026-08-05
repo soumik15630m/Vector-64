@@ -29,11 +29,14 @@
 namespace Datagen {
 namespace {
 
+// Search settings match the visualizer's shipped defaults, which follow what
+// Stockfish uses for foundational NNUE data: depth 9 under a 5000-node ceiling.
 struct Params {
   std::string net;
   std::string out;
   int games = 20000;
-  int nodes = 6000;
+  int nodes = 5000;
+  int depth = 9;
   int threads = 8;
   int hashMb = 16;
   int maxPlies = 200;
@@ -70,6 +73,8 @@ void worker(const Params &p, Shared &sh) {
   cb.onInfo = [](const Search::IterInfo &) {};
   Search::Limits limits;
   limits.maxNodes = uint64_t(p.nodes);
+  if (p.depth > 0)
+    limits.maxDepth = p.depth;
 
   std::vector<std::string> buf;
   auto flush = [&] {
@@ -153,6 +158,8 @@ int run(int argc, char **argv) {
       p.games = std::stoi(next_arg(argc, argv, i));
     else if (a == "--nodes")
       p.nodes = std::stoi(next_arg(argc, argv, i));
+    else if (a == "--depth")
+      p.depth = std::stoi(next_arg(argc, argv, i));
     else if (a == "--threads" || a == "--concurrency")
       p.threads = std::stoi(next_arg(argc, argv, i));
     else if (a == "--hash")
@@ -194,8 +201,9 @@ int run(int argc, char **argv) {
   if (p.net.empty())
     std::cerr << "datagen: WARNING no --net given; using classical eval\n";
 
-  std::cout << "[datagen] " << p.games << " games @ " << p.nodes << " nodes, "
-            << p.threads << " threads, emit=" << (p.raw ? "raw" : "blend")
+  std::cout << "[datagen] " << p.games << " games @ " << p.nodes
+            << " nodes / depth " << p.depth << ", " << p.threads
+            << " threads, emit=" << (p.raw ? "raw" : "blend")
             << (p.net.empty() ? "" : (", net=" + p.net)) << '\n'
             << std::flush;
 

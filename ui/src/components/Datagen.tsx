@@ -20,16 +20,20 @@ export function DatagenPanel({
   probe: (out: string) => Promise<{ resumable: boolean; positions: number; games: number }>;
 }) {
   const d = s.datagen;
-  const [out, setOut] = useState("data/selfplay.txt");
-  const [target, setTarget] = useState("1000000");
-  const [nodes, setNodes] = useState("6000");
-  const [emit, setEmit] = useState<"raw" | "blend">("raw");
-  const [lam, setLam] = useState("0.5");
-  const [skipPlies, setSkipPlies] = useState("12");
-  const [maxPlies, setMaxPlies] = useState("200");
-  const [openingPlies, setOpeningPlies] = useState("8");
-  const [balance, setBalance] = useState("150");
-  const [seed, setSeed] = useState("12345");
+  // Every field starts from what the ENGINE ships, so the tool and the CLI
+  // agree out of the box and there is no second set of defaults to drift.
+  const def = s.datagenDefaults;
+  const [out, setOut] = useState(def.out);
+  const [target, setTarget] = useState(String(def.targetPositions));
+  const [nodes, setNodes] = useState(String(def.nodes));
+  const [depth, setDepth] = useState(String(def.depth));
+  const [emit, setEmit] = useState<"raw" | "blend">(def.emit);
+  const [lam, setLam] = useState(String(def.lam));
+  const [skipPlies, setSkipPlies] = useState(String(def.skipPlies));
+  const [maxPlies, setMaxPlies] = useState(String(def.maxPlies));
+  const [openingPlies, setOpeningPlies] = useState(String(def.openingPlies));
+  const [balance, setBalance] = useState(String(def.balance));
+  const [seed, setSeed] = useState(String(def.seed));
   const [more, setMore] = useState(false);
   const [found, setFound] = useState<{ positions: number; games: number } | null>(
     null,
@@ -64,15 +68,16 @@ export function DatagenPanel({
       cmd: "datagen",
       action: "start",
       out: out.trim(),
-      targetPositions: Math.max(1, num(target, 1000000, 1)),
-      nodes: Math.max(1, num(nodes, 6000, 1)),
+      targetPositions: Math.max(1, num(target, def.targetPositions, 1)),
+      nodes: Math.max(1, num(nodes, def.nodes, 1)),
+      depth: Math.min(s.maxDepth, num(depth, def.depth)),
       emit,
-      lam: Math.min(1, Math.max(0, num(lam, 0.5))),
-      skipPlies: num(skipPlies, 12),
-      maxPlies: Math.max(1, num(maxPlies, 200, 1)),
-      openingPlies: num(openingPlies, 8),
-      balance: num(balance, 150),
-      seed: num(seed, 12345),
+      lam: Math.min(1, Math.max(0, num(lam, def.lam))),
+      skipPlies: num(skipPlies, def.skipPlies),
+      maxPlies: Math.max(1, num(maxPlies, def.maxPlies, 1)),
+      openingPlies: num(openingPlies, def.openingPlies),
+      balance: num(balance, def.balance),
+      seed: num(seed, def.seed),
       resume,
     });
 
@@ -170,8 +175,44 @@ export function DatagenPanel({
             className="numbox"
             type="text"
             value={nodes}
+            title="node ceiling per move"
             onChange={(e) => setNodes(e.currentTarget.value)}
           />
+        </div>
+        <div>
+          <label className="lbl">depth</label>
+          <input
+            className="numbox"
+            type="text"
+            value={depth}
+            title="search depth; the node count caps it. 0 = node-limited only"
+            onChange={(e) => setDepth(e.currentTarget.value)}
+          />
+        </div>
+        <div>
+          <label className="lbl">
+            defaults<b>engine</b>
+          </label>
+          <button
+            className="btn"
+            style={{ width: "100%", padding: "3px 6px", fontSize: 10.5 }}
+            title="restore the engine's shipped settings"
+            onClick={() => {
+              setOut(def.out);
+              setTarget(String(def.targetPositions));
+              setNodes(String(def.nodes));
+              setDepth(String(def.depth));
+              setEmit(def.emit);
+              setLam(String(def.lam));
+              setSkipPlies(String(def.skipPlies));
+              setMaxPlies(String(def.maxPlies));
+              setOpeningPlies(String(def.openingPlies));
+              setBalance(String(def.balance));
+              setSeed(String(def.seed));
+            }}
+          >
+            reset
+          </button>
         </div>
       </div>
       <div style={{ marginTop: 8 }}>

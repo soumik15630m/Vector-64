@@ -120,6 +120,7 @@ export interface DatagenOptions {
   out: string;
   targetPositions: number;
   nodes: number;
+  depth: number;
   emit: "raw" | "blend";
   lam: number;
   skipPlies: number;
@@ -128,6 +129,21 @@ export interface DatagenOptions {
   balance: number;
   seed: number;
   resume?: boolean;
+}
+
+/** The engine's own shipped defaults; the UI never invents its own. */
+export interface DatagenDefaults {
+  out: string;
+  targetPositions: number;
+  nodes: number;
+  depth: number;
+  emit: "raw" | "blend";
+  lam: number;
+  skipPlies: number;
+  maxPlies: number;
+  openingPlies: number;
+  balance: number;
+  seed: number;
 }
 
 export interface EngineState {
@@ -149,6 +165,7 @@ export interface EngineState {
   legalMoves: string[];
   frame: Frame | null;
   datagen: DatagenState;
+  datagenDefaults: DatagenDefaults;
 }
 
 export type ControlCommand =

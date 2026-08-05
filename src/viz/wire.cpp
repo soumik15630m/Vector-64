@@ -106,6 +106,22 @@ std::string encode_state(const Snapshot &s) {
 
   h["legalMoves"] = s.legalMoves;
 
+  // Ship the engine's own defaults so the UI never invents its own.
+  {
+    const DatagenConfig dd;
+    h["datagenDefaults"] = {{"out", dd.out},
+                            {"targetPositions", dd.targetPositions},
+                            {"nodes", dd.nodes},
+                            {"depth", dd.depth},
+                            {"skipPlies", dd.skipPlies},
+                            {"maxPlies", dd.maxPlies},
+                            {"openingPlies", dd.openingPlies},
+                            {"balance", dd.balance},
+                            {"lam", dd.lam},
+                            {"seed", dd.seed},
+                            {"emit", dd.raw ? "raw" : "blend"}};
+  }
+
   h["datagen"] = {{"running", s.datagen.running},
                   {"out", s.datagen.out},
                   {"positions", s.datagen.positions},
@@ -284,13 +300,16 @@ std::string handle_control(Session &session, const std::string &body,
         return j.contains(k) && j[k].is_number() ? j[k].get<decltype(def)>()
                                                  : def;
       };
-      dg.targetPositions = num("targetPositions", int64_t{1000000});
-      dg.nodes = num("nodes", int{6000});
-      dg.skipPlies = num("skipPlies", int{12});
-      dg.maxPlies = num("maxPlies", int{200});
-      dg.openingPlies = num("openingPlies", int{8});
-      dg.balance = num("balance", int{150});
-      dg.lam = num("lam", double{0.5});
+      // Anything the client omits falls back to the engine's own default.
+      const DatagenConfig dd;
+      dg.targetPositions = num("targetPositions", dd.targetPositions);
+      dg.nodes = num("nodes", dd.nodes);
+      dg.depth = num("depth", dd.depth);
+      dg.skipPlies = num("skipPlies", dd.skipPlies);
+      dg.maxPlies = num("maxPlies", dd.maxPlies);
+      dg.openingPlies = num("openingPlies", dd.openingPlies);
+      dg.balance = num("balance", dd.balance);
+      dg.lam = num("lam", dd.lam);
       dg.seed = static_cast<uint64_t>(num("seed", int{12345}));
       dg.raw = !(j.contains("emit") && j["emit"].is_string() &&
                  j["emit"].get<std::string>() == "blend");
