@@ -169,7 +169,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: '3.x' }
       - uses: actions/download-artifact@v4
         with: { name: engine-linux }
@@ -184,7 +184,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: '3.x' }
       - uses: actions/download-artifact@v4
         with: { name: engine-linux }
@@ -199,7 +199,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: '3.x' }
       - uses: actions/download-artifact@v4
         with: { name: engine-linux }
@@ -214,7 +214,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: '3.x' }
       - uses: actions/download-artifact@v4
         with: { name: engine-linux }
@@ -408,7 +408,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: '3.x' }
       - run: python -m pip install -r requirements-dev.txt && python -m ruff check tools tests
 
@@ -417,7 +417,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: '3.x' }
       - run: python -m pip install -r requirements-dev.txt && python -m mypy tools tests/python
 
@@ -426,6 +426,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: '3.x' }
       - run: python -m pip install pytest && python -m pytest tests/python/test_feature_encoding.py -v
