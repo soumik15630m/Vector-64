@@ -110,6 +110,7 @@ export function decodeState(buf: ArrayBuffer): EngineState {
       wins: 0, draws: 0, losses: 0, positionsPerSec: 0, etaMinutes: 0,
       shard: 0, shardPath: "",
     },
+    record: header.record ?? { recording: false, path: "", frames: 0 },
     engineColor: header.engineColor,
     arch: header.arch,
     game: header.game,

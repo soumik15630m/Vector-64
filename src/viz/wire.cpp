@@ -141,6 +141,10 @@ std::string encode_state(const Snapshot &s) {
                   {"shard", s.datagen.shard},
                   {"shardPath", s.datagen.shardPath}};
 
+  h["record"] = {{"recording", s.recording},
+                 {"path", s.recordPath},
+                 {"frames", s.recordedFrames}};
+
   h["compare"] = s.compareActive
                      ? json{{"active", true},
                             {"name", s.compareName},

@@ -9,6 +9,7 @@ import { NeuronField } from "./components/NeuronField";
 import { NetInspector } from "./components/NetInspector";
 import { DatagenPanel } from "./components/Datagen";
 import { Ablation, EvalGraph, SearchTree } from "./components/Analysis";
+import { Recorder } from "./components/Recorder";
 import { useGameHistory } from "./engine/history";
 import {
   CandidatesPanel,
@@ -103,9 +104,13 @@ export default function App() {
 
   const { plies, iters } = useGameHistory(state);
 
-  const send = (c: ControlCommand) => {
-    if (source) void source.send(c);
-  };
+  // Returns whether the engine accepted the command. Most callers ignore it --
+  // a function returning a promise is still assignable to a void-returning
+  // prop -- but anything that can be REFUSED (a file that will not open, a
+  // control sent while datagen holds the lock) needs to be able to say so
+  // instead of leaving the UI claiming something happened.
+  const send = (c: ControlCommand): Promise<boolean> =>
+    source ? source.send(c) : Promise.resolve(false);
 
   // Seek: replay the game up to that ply in analysis mode, so the board AND the
   // network show the position as it was, not just the board.
@@ -260,6 +265,7 @@ export default function App() {
               <EvalGraph plies={plies} onSeek={(p) => seekTo(p.ply)} />
               <SearchTree iters={iters} />
               <Ablation s={state} send={send} />
+              <Recorder s={state} send={send} />
             </>
           )}
         </div>

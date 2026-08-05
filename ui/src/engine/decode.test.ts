@@ -38,6 +38,11 @@ describe("wire format contract", () => {
     expect(state.hardwareThreads).toBeGreaterThanOrEqual(1);
     expect(state.engineColor).toBe(1);
     expect(state.legalMoves).toEqual(["e2e4", "d2d4"]);
+    // Recording state comes from the engine, not from a local flag, so the
+    // panel is wrong the moment this field drifts.
+    expect(state.record.recording).toBe(true);
+    expect(state.record.path).toBe("frames.jsonl");
+    expect(state.record.frames).toBe(1234);
   });
 
   it("decodes game state", () => {

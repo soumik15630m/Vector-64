@@ -164,20 +164,32 @@ bool Session::load_compare_net(const std::string &path) {
 bool Session::has_compare_net() const { return compareNet_ != nullptr; }
 
 bool Session::start_recording(const std::string &path) {
-  std::lock_guard<std::mutex> lk(recMu_);
-  rec_.close();
-  rec_.clear();
-  rec_.open(path, std::ios::out | std::ios::trunc);
-  if (!rec_)
-    return false;
-  recPath_ = path;
+  {
+    // Scoped: publish() reads the recorder under this same mutex, so holding
+    // it across the call would deadlock.
+    std::lock_guard<std::mutex> lk(recMu_);
+    rec_.close();
+    rec_.clear();
+    rec_.open(path, std::ios::out | std::ios::trunc);
+    if (!rec_)
+      return false;
+    recPath_ = path;
+    recFrames_ = 0;
+  }
+  // Publish immediately rather than waiting for the next frame: a paused or
+  // idle session produces none, and the control would look like it did
+  // nothing.
+  publish();
   return true;
 }
 
 void Session::stop_recording() {
-  std::lock_guard<std::mutex> lk(recMu_);
-  rec_.close();
-  recPath_.clear();
+  {
+    std::lock_guard<std::mutex> lk(recMu_);
+    rec_.close();
+    recPath_.clear();
+  }
+  publish();
 }
 
 bool Session::recording() const {
@@ -598,6 +610,7 @@ void Session::record(const Snapshot &s) {
     return;
   rec_ << encode_record(s) << '\n';
   rec_.flush(); // a crashed run should still leave a usable log
+  ++recFrames_;
 }
 
 void Session::publish() {
@@ -640,7 +653,22 @@ void Session::publish() {
     std::lock_guard<std::mutex> lk(dgMu_);
     dg = dgState_;
   }
+  // Read under the recorder's own lock, not the snapshot's: the file can be
+  // opened or closed from a control message at any moment, and a recording
+  // started from the command line must show up here too.
+  bool rec = false;
+  std::string recPath;
+  int64_t recFrames = 0;
+  {
+    std::lock_guard<std::mutex> lk(recMu_);
+    rec = rec_.is_open();
+    recPath = recPath_;
+    recFrames = recFrames_;
+  }
   std::lock_guard<std::mutex> lk(mu_);
+  snap_.recording = rec;
+  snap_.recordPath = std::move(recPath);
+  snap_.recordedFrames = recFrames;
   snap_.datagen = dg;
   snap_.game = std::move(g);
   snap_.legalMoves = std::move(legalNow);

@@ -144,6 +144,17 @@ export interface DatagenOptions {
   resume?: boolean;
 }
 
+/**
+ * Frame recording. Reported by the engine rather than tracked here, because a
+ * recording can also be started with --record on the command line, and an open
+ * that failed must not look like it worked.
+ */
+export interface RecordState {
+  recording: boolean;
+  path: string;
+  frames: number;
+}
+
 /** The engine's own shipped defaults; the UI never invents its own. */
 export interface DatagenDefaults {
   out: string;
@@ -189,6 +200,7 @@ export interface EngineState {
   frame: Frame | null;
   datagen: DatagenState;
   datagenDefaults: DatagenDefaults;
+  record: RecordState;
 }
 
 export type ControlCommand =
@@ -199,6 +211,8 @@ export type ControlCommand =
   | { cmd: "nodes"; value: number }
   | { cmd: "threads"; value: number }
   | { cmd: "variety"; value: number }
+  /** A path starts recording; empty stops it. */
+  | { cmd: "record"; value: string }
   | { cmd: "randomopening"; value: boolean }
   | { cmd: "depth"; value: number }
   | ({ cmd: "datagen"; action: "start" } & DatagenOptions)

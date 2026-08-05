@@ -188,6 +188,12 @@ struct Snapshot {
   std::string compareName;
   std::vector<std::string> legalMoves; // side to move, for Human mode
   DatagenState datagen;
+  // Frame recording. Reported so the UI shows what is actually happening
+  // rather than what it last asked for -- a recording can be started from the
+  // command line too, and a failed open must not look like success.
+  bool recording = false;
+  std::string recordPath;
+  int64_t recordedFrames = 0;
 };
 
 class Session {
@@ -336,6 +342,7 @@ private:
   mutable std::mutex recMu_;
   std::ofstream rec_;
   std::string recPath_;
+  int64_t recFrames_ = 0;
 
   // --- data generation -------------------------------------------------
   DatagenConfig dgCfg_;
