@@ -2,6 +2,7 @@
 
 #include "../cores/movegen.h"
 #include "../datagen/selfplay.h"
+#include "../search/transposition_table.h" // is_mate_score
 
 #include "../uci/uci_util.h"
 #include "wire.h"
@@ -35,6 +36,42 @@ bool has_legal_move(const Core::Position &pos) {
   Core::MoveList legal;
   Core::generate_legal_moves(scratch, legal);
   return legal.size() > 0;
+}
+
+// Pick uniformly among the root moves the search scored within `cp` of the
+// best, instead of always the top one.
+//
+// A search is deterministic: the same position gives the same move, so an
+// engine playing itself from the start position replays one identical game
+// forever. Random openings paper over that, but the moment they are off the
+// problem is back. Varying the choice among near-equal root moves is what
+// fixes it at the source -- and it is what Stockfish's own data generator does
+// (its random-multi-pv option) for exactly this reason.
+//
+// Nothing here invents a move or touches a reported number: every candidate is
+// one the search itself scored, with a full window, as within `cp` of best.
+Core::Move pick_varied(const Search::Result &r,
+                       const std::vector<Search::RootLine> &lines, int cp,
+                       uint64_t &rngState) {
+  // lines is empty unless MultiPV > 1 -- with one line there is no alternative
+  // to weigh, so the best move is the only answer.
+  if (cp <= 0 || lines.size() < 2 || !r.bestMove.is_ok())
+    return r.bestMove;
+  // Never gamble with a forced mate: "within 30cp" means nothing in the mate
+  // range, and swapping mate-in-2 for mate-in-9 reads as a blunder.
+  if (Search::is_mate_score(lines.front().scoreCp))
+    return r.bestMove;
+  const int best = lines.front().scoreCp;
+  std::vector<Core::Move> pool;
+  for (const Search::RootLine &l : lines)
+    if (l.move.is_ok() && !Search::is_mate_score(l.scoreCp) &&
+        best - l.scoreCp <= cp)
+      pool.push_back(l.move);
+  if (pool.size() < 2)
+    return r.bestMove;
+  std::mt19937_64 rng(rngState);
+  rngState = rng();
+  return pool[rng() % pool.size()];
 }
 
 } // namespace
@@ -82,9 +119,12 @@ Session::Session(Config cfg)
   moveDelayMs_.store(cfg_.moveDelayMs);
   nodes_.store(std::max(0, cfg_.nodes));
   depth_.store(std::clamp(cfg_.depth, 0, max_depth()));
+  varietyCp_.store(std::max(0, cfg_.varietyCp));
   rngState_ = cfg_.seed ? cfg_.seed : 0x9E3779B97F4A7C15ULL;
-  randomOpening_ = cfg_.openingPlies > 0;
-  reset_game(randomOpening_);
+  // Later games open randomly so they differ; the first starts from the real
+  // initial position, which is what you want to see when the tool opens.
+  randomOpening_ = true;
+  reset_game(false);
   publish();
 }
 
@@ -192,6 +232,8 @@ void Session::set_nodes(int nodes) { nodes_.store(std::max(0, nodes)); }
 int Session::max_depth() { return 246; } // matches the UCI clamp
 
 void Session::set_depth(int d) { depth_.store(std::clamp(d, 0, max_depth())); }
+
+void Session::set_variety(int cp) { varietyCp_.store(std::max(0, cp)); }
 
 int Session::hardware_threads() {
   const unsigned hc = std::thread::hardware_concurrency();
@@ -448,14 +490,31 @@ void Session::tick_clock() {
   }
 }
 
+// Caller holds cmdMu_.
 void Session::reset_game(bool randomOpening) {
-  Core::Position p;
+  // How many random plies to open with. Config::openingPlies is 0 so that plain
+  // self-play starts from the real initial position, but that number must NOT
+  // be what a random opening uses -- zero plies means every game starts from
+  // the same position, and a deterministic search then replays the identical
+  // game forever. Datagen brings its own count; self-play falls back to the
+  // usual 8.
+  int plies = 0;
+  int balance = cfg_.balance;
   if (randomOpening) {
+    if (mode_ == Mode::Datagen) {
+      plies = dgCfg_.openingPlies;
+      balance = dgCfg_.balance;
+    } else {
+      plies = cfg_.openingPlies > 0 ? cfg_.openingPlies : kDefaultOpeningPlies;
+    }
+  }
+
+  Core::Position p;
+  if (plies > 0) {
     std::mt19937_64 rng(rngState_);
     rngState_ = rng();
     int tries = 0;
-    while (!Datagen::make_opening(p, rng, cfg_.openingPlies, cfg_.balance) &&
-           ++tries < 64) {
+    while (!Datagen::make_opening(p, rng, plies, balance) && ++tries < 64) {
     }
     if (tries >= 64)
       p.setFromFEN(Datagen::START_FEN);
@@ -576,12 +635,14 @@ void Session::publish() {
   snap_.running = !stop_.load();
   snap_.paused = paused_.load();
   snap_.threads = appliedThreads_;
+  snap_.varietyCp = varietyCp_.load();
   snap_.nnueActive = search_.evaluator().nnue_active();
   snap_.seq = ++seq_;
   cv_.notify_all();
 }
 
-Search::Result Session::think(bool ponder) {
+Search::Result Session::think(bool ponder,
+                              std::vector<Search::RootLine> *linesOut) {
   // Thread count changes land here, between searches.
   const int want = threads_.load();
   if (want != appliedThreads_) {
@@ -631,6 +692,10 @@ Search::Result Session::think(bool ponder) {
         c.pv.push_back(UCI::move_to_uci(m));
       si.candidates.push_back(std::move(c));
     }
+    // Keep the deepest iteration's lines: they are what the caller chooses
+    // from, and each later iteration supersedes the one before it.
+    if (linesOut)
+      *linesOut = info.lines;
 
     // Walk the principal variation and probe its leaf: that is the position
     // the engine is actually weighing at this depth. Each move is validated,
@@ -724,7 +789,11 @@ void Session::self_play_step() {
         ++losses_;
       else
         ++draws_;
-      reset_game(true);
+      // Honour the toggle. Forcing true here made the setting meaningless;
+      // leaving it false for every game makes each one start from the same
+      // position, which a deterministic search then replays identically -- so
+      // the toggle is what decides, and it defaults to on for variety.
+      reset_game(randomOpening_);
       publish_needed_ = true;
       return;
     }
@@ -734,7 +803,8 @@ void Session::self_play_step() {
     }
   }
 
-  const Search::Result r = think();
+  std::vector<Search::RootLine> lines;
+  const Search::Result r = think(/*ponder=*/false, &lines);
   abortSearch_.store(false);
   if (!r.bestMove.is_ok()) {
     publish();
@@ -742,7 +812,13 @@ void Session::self_play_step() {
   }
   {
     std::lock_guard<std::mutex> lk(cmdMu_);
-    apply_move_internal(r.bestMove);
+    // Vary the opening among near-equal moves so consecutive games differ;
+    // past varietyPlies the engine always plays its best move.
+    const Core::Move played =
+        static_cast<int>(moves_.size()) < cfg_.varietyPlies
+            ? pick_varied(r, lines, varietyCp_.load(), rngState_)
+            : r.bestMove;
+    apply_move_internal(played);
   }
   publish_frame_current();
   publish();
@@ -845,14 +921,15 @@ void Session::datagen_step() {
         ++losses_;
       else
         ++draws_;
-      reset_game(true);
+      reset_game(true); // datagen always wants varied openings
     }
     datagen_write(rec, wdl);
     publish();
     return;
   }
 
-  const Search::Result r = think();
+  std::vector<Search::RootLine> lines;
+  const Search::Result r = think(/*ponder=*/false, &lines);
   abortSearch_.store(false);
   if (!r.bestMove.is_ok()) {
     publish();
@@ -868,7 +945,13 @@ void Session::datagen_step() {
           pos_.side_to_move() == Core::WHITE ? r.scoreCp : -r.scoreCp;
       dgRecord_.emplace_back(pos_.toFEN(), Datagen::clamp_score(evalWhite));
     }
-    apply_move_internal(r.bestMove);
+    // The label above is the position's value (the best line's score) and is
+    // unaffected by which near-equal continuation we then walk into. Varying
+    // that continuation is what stops one random opening from always yielding
+    // the same game, and so the same rows.
+    apply_move_internal(ply < dgCfg_.varietyPlies
+                            ? pick_varied(r, lines, dgCfg_.varietyCp, rngState_)
+                            : r.bestMove);
     if (static_cast<int>(moves_.size()) >= dgCfg_.maxPlies)
       gameOver_ = true, result_ = "1/2-1/2", reason_ = "maxplies";
   }

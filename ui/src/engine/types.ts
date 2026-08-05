@@ -154,6 +154,13 @@ export interface EngineState {
   thinking: boolean;
   nnueActive: boolean;
   threads: number;
+  /**
+   * Root-move variety in centipawns. While a game is inside its first plies the
+   * engine picks at random among the root moves it scored within this much of
+   * the best, so consecutive self-play games are not identical replays of one
+   * deterministic search. 0 = always play the best move.
+   */
+  varietyCp: number;
   /** Cores this machine reports; the thread control never exceeds it. */
   hardwareThreads: number;
   /** Deepest search the engine supports. */
@@ -175,6 +182,7 @@ export type ControlCommand =
   | { cmd: "delay"; value: number }
   | { cmd: "nodes"; value: number }
   | { cmd: "threads"; value: number }
+  | { cmd: "variety"; value: number }
   | { cmd: "randomopening"; value: boolean }
   | { cmd: "depth"; value: number }
   | ({ cmd: "datagen"; action: "start" } & DatagenOptions)

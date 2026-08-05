@@ -365,6 +365,11 @@ add_test(NAME "viz.telemetry_exact" COMMAND test_viz frame)
 # The session driver keeps the board and the reported move list in agreement,
 # and self-play games actually reach terminal states.
 add_test(NAME "viz.session_selfplay" COMMAND test_viz session)
+# A search is deterministic, so without root-move variety self-play replays one
+# identical game from the same position forever -- a silent failure that only
+# shows up as "why is every game the same?". Random openings hide it, so this
+# runs with them off.
+add_test(NAME "viz.selfplay_variety" COMMAND test_viz variety)
 # The wire format is binary: a renamed field would fail silently at runtime, so
 # the encoder must keep producing something the UI decoder understands. CI pairs
 # this with the TypeScript side (see the viz-ui job).

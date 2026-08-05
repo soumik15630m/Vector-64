@@ -46,6 +46,11 @@ struct DatagenConfig {
   int maxPlies = 200;
   int openingPlies = 8; // datagen always uses random balanced openings
   int balance = 150;
+  // Root-move variety, as in Config -- Stockfish's random-multi-pv. Random
+  // openings alone leave every game after ply openingPlies deterministic, so
+  // the same opening always produces the same game.
+  int varietyCp = 30;
+  int varietyPlies = 16;
   double lam = 0.5;
   bool raw = true; // raw = fen|eval|wdl (bullet-native); false = fen|blended cp
   uint64_t seed = 12345;
@@ -66,6 +71,10 @@ struct DatagenState {
   int64_t resumablePositions = 0;
 };
 
+// Random-opening length when one is requested but the config asks for none
+// (self-play defaults to starting from the real initial position).
+inline constexpr int kDefaultOpeningPlies = 8;
+
 const char *mode_name(Mode m);
 bool mode_from_name(const std::string &s, Mode &out);
 
@@ -75,9 +84,10 @@ struct Config {
   int hashMb = 32;
   int threads = 1;
   int moveDelayMs = 300; // pacing so self-play is watchable
-  // 0 = start from the normal starting position. Self-play used a random
-  // balanced opening so games differed, but starting mid-position is confusing
-  // to watch, so the default is now the real start and variety is opt-in.
+  // Plies of random balanced opening per game. 0 means "no preference": the
+  // first game starts from the real initial position, which is what you want to
+  // see when the tool opens, and later games use kDefaultOpeningPlies so they
+  // do not all replay the same line. Set it to pin a specific length.
   int openingPlies = 0;
   int balance = 150;
   int maxPlies = 300;
@@ -89,6 +99,16 @@ struct Config {
   // Candidate moves to evaluate per search. >1 makes the decision visible as a
   // comparison; it costs extra search, which is why the engine defaults to 1.
   int multiPv = 4;
+  // Root-move variety, in centipawns. For the first varietyPlies of a game the
+  // engine picks uniformly among the root moves it scored within this much of
+  // the best, rather than always the top one -- without it a deterministic
+  // search replays the identical game every time (see pick_varied). 0 = off,
+  // always play the best move. Needs multiPv > 1 to have anything to choose
+  // between.
+  int varietyCp = 30;
+  // Only the opening is varied. Past this the engine plays its best move, so a
+  // sharp middlegame or endgame is never thrown away for the sake of variety.
+  int varietyPlies = 16;
 };
 
 // One candidate move with the score the search actually gave it.
@@ -140,6 +160,7 @@ struct Snapshot {
   bool thinking = false;
   bool nnueActive = false;
   int threads = 1;
+  int varietyCp = 0;   // root-move variety currently in effect
   int engineColor = 1; // Human mode: the colour the engine plays (Core::Color)
   GameState game;
   SearchInfo search;
@@ -185,6 +206,9 @@ public:
   void set_threads(int n);
   // 0 = no depth cap (node-limited only). Clamped to the engine's ceiling.
   void set_depth(int d);
+  // Root-move variety in centipawns; 0 plays the best move always. See
+  // Config::varietyCp.
+  void set_variety(int cp);
   // Deepest search the engine supports; the UI uses it to bound its control.
   static int max_depth();
   void new_game();
@@ -228,7 +252,10 @@ private:
   // Search the current position, publishing per-iteration telemetry.
   // `ponder` runs one long search instead of a short budgeted one: it is the
   // engine thinking on the opponent's clock and ends when they move.
-  Search::Result think(bool ponder = false);
+  // `linesOut`, when given, receives the last iteration's root lines so the
+  // caller can pick among near-equal moves (see pick_varied).
+  Search::Result think(bool ponder = false,
+                       std::vector<Search::RootLine> *linesOut = nullptr);
   void publish_frame(const Core::Position &pos, bool thinking);
   void publish_frame_current();
   void publish();
@@ -255,6 +282,7 @@ private:
   std::atomic<int> nodes_{20000};
   std::atomic<int> threads_{1};
   std::atomic<int> depth_{0};
+  std::atomic<int> varietyCp_{0};
   // Rate-limits telemetry during a long ponder so the UI is not flooded.
   std::chrono::steady_clock::time_point lastPublish_{};
   int appliedThreads_ = 1;

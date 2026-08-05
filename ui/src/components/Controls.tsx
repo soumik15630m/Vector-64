@@ -83,6 +83,9 @@ export function Controls({ s, send }: Props) {
   const [nodeVal, setNodeVal] = useState(20000);
   const [nodeText, setNodeText] = useState("20000");
   const [depthText, setDepthText] = useState("0");
+  // Seeded from the engine so the control opens showing what is actually in
+  // effect rather than a guess.
+  const [variety, setVariety] = useState(s.varietyCp);
 
   // Typed entry: anything the engine accepts is allowed (nodes are uint64 on
   // the engine side, so there is no ceiling to enforce here); depth is clamped
@@ -115,7 +118,9 @@ export function Controls({ s, send }: Props) {
   // cannot push it out of range.
   const maxThreads = Math.max(1, s.hardwareThreads || 1);
   const [threads, setThreads] = useState(Math.min(s.threads, maxThreads));
-  const [randomOpening, setRandomOpening] = useState(false);
+  // The engine starts with this on (game 1 from the real start position,
+  // later games opened randomly), so the toggle must open on too.
+  const [randomOpening, setRandomOpening] = useState(true);
 
   // A dataset built from shifting settings is not one dataset, so everything
   // that would change the data locks while generating. Pause, resume and stop
@@ -273,6 +278,31 @@ export function Controls({ s, send }: Props) {
             onKeyDown={(e) => e.key === "Enter" && commitDepth()}
           />
         </div>
+      </div>
+
+      <div style={{ marginTop: 8 }}>
+        <label className="lbl">
+          variety
+          <b>{variety === 0 ? "off · always best" : `±${variety} cp`}</b>
+        </label>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={variety}
+          title={
+            "Opening variety. The engine picks at random among the root moves " +
+            "it scored within this many centipawns of the best, for the first " +
+            "few plies only. A search is deterministic, so at 0 every game " +
+            "from the same position is the same game."
+          }
+          onChange={(e) => {
+            const v = Math.min(Math.max(0, Number(e.currentTarget.value) || 0), 100);
+            setVariety(v);
+            send({ cmd: "variety", value: v });
+          }}
+        />
       </div>
 
       <div style={{ marginTop: 8 }}>

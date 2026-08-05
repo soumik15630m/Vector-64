@@ -17,7 +17,10 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <iterator>
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
 
 namespace {
@@ -208,6 +211,76 @@ bool session_test() {
   return true;
 }
 
+// Self-play from the fixed starting position must not replay one identical
+// game forever.
+//
+// A search is deterministic, so with nothing varying the move choice the engine
+// plays the same game from the same position every time -- which is exactly the
+// bug this guards. Random openings hide it; here they are deliberately OFF so
+// only the root-move variety can make the games differ.
+bool variety_test() {
+  Viz::Config cfg;
+  cfg.nodes = 400;
+  cfg.moveDelayMs = 0;
+  cfg.hashMb = 8;
+  cfg.threads = 1;
+  cfg.maxPlies = 24; // short games so several finish inside the time budget
+  cfg.openingPlies = 0;
+  cfg.seed = 11;
+
+  Viz::Session session(cfg);
+  session.set_random_opening(false); // every game from the same position
+  session.start();
+
+  // gameIndex -> the longest move list seen for it.
+  std::map<int, std::vector<std::string>> games;
+  std::set<std::string> starts;
+  const auto t0 = std::chrono::steady_clock::now();
+  uint64_t seq = 0;
+  while (std::chrono::steady_clock::now() - t0 < std::chrono::seconds(30)) {
+    const Viz::Snapshot s = session.wait_for(seq, 200);
+    if (s.seq == seq)
+      continue;
+    seq = s.seq;
+    if (s.game.startFen.empty())
+      continue;
+    starts.insert(s.game.startFen);
+    std::vector<std::string> &known = games[s.game.gameIndex];
+    if (s.game.moves.size() > known.size())
+      known = s.game.moves;
+    if (games.size() >= 5)
+      break;
+  }
+  session.stop();
+
+  // Drop the game in progress when the loop broke: it is still growing.
+  if (!games.empty())
+    games.erase(std::prev(games.end()));
+  if (games.size() < 3) {
+    std::printf("FAIL: only %zu self-play games completed\n", games.size());
+    return false;
+  }
+  if (starts.size() != 1) {
+    std::printf("FAIL: random openings were off but %zu start positions "
+                "were used\n",
+                starts.size());
+    return false;
+  }
+  std::set<std::vector<std::string>> distinct;
+  for (const auto &g : games)
+    distinct.insert(g.second);
+  if (distinct.size() != games.size()) {
+    std::printf("FAIL: %zu games from the same position produced only %zu "
+                "distinct -- the engine is replaying itself\n",
+                games.size(), distinct.size());
+    return false;
+  }
+  std::printf("PASS: self-play varies (%zu games from one start position, "
+              "all %zu lines distinct)\n",
+              games.size(), distinct.size());
+  return true;
+}
+
 } // namespace
 
 // Emit one encoded state message so the TypeScript decoder can be checked
@@ -284,6 +357,8 @@ int main(int argc, char **argv) {
   }
   if (which == "session")
     return session_test() ? 0 : 1;
+  if (which == "variety")
+    return variety_test() ? 0 : 1;
 
   // Deterministic synthetic weights: exercises the full pipeline without
   // depending on a 46 MB net file being present.

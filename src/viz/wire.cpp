@@ -68,6 +68,7 @@ std::string encode_state(const Snapshot &s) {
   h["thinking"] = s.thinking;
   h["nnueActive"] = s.nnueActive;
   h["threads"] = s.threads;
+  h["varietyCp"] = s.varietyCp;
   h["hardwareThreads"] = Session::hardware_threads();
   h["maxDepth"] = Session::max_depth();
   h["engineColor"] = s.engineColor;
@@ -117,6 +118,8 @@ std::string encode_state(const Snapshot &s) {
                             {"maxPlies", dd.maxPlies},
                             {"openingPlies", dd.openingPlies},
                             {"balance", dd.balance},
+                            {"varietyCp", dd.varietyCp},
+                            {"varietyPlies", dd.varietyPlies},
                             {"lam", dd.lam},
                             {"seed", dd.seed},
                             {"emit", dd.raw ? "raw" : "blend"}};
@@ -269,6 +272,8 @@ std::string handle_control(Session &session, const std::string &body,
     session.set_threads(intVal(1));
   } else if (cmd == "depth") {
     session.set_depth(intVal(0));
+  } else if (cmd == "variety") {
+    session.set_variety(intVal(Config{}.varietyCp));
   } else if (cmd == "comparenet") {
     const std::string path = j.contains("value") && j["value"].is_string()
                                  ? j["value"].get<std::string>()
@@ -309,6 +314,8 @@ std::string handle_control(Session &session, const std::string &body,
       dg.maxPlies = num("maxPlies", dd.maxPlies);
       dg.openingPlies = num("openingPlies", dd.openingPlies);
       dg.balance = num("balance", dd.balance);
+      dg.varietyCp = num("varietyCp", dd.varietyCp);
+      dg.varietyPlies = num("varietyPlies", dd.varietyPlies);
       dg.lam = num("lam", dd.lam);
       dg.seed = static_cast<uint64_t>(num("seed", int{12345}));
       dg.raw = !(j.contains("emit") && j["emit"].is_string() &&
