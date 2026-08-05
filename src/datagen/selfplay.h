@@ -109,6 +109,12 @@ public:
     rowsPerShard_ = rowsPerShard;
     shard_ = 0;
     rowsInShard_ = 0;
+    // Backward compatibility: a dataset written before the generator sharded
+    // is one plain file. If `path` names an existing FILE, keep writing to
+    // that file -- never turn it into a directory, and never strand it.
+    std::error_code fec;
+    if (std::filesystem::is_regular_file(path_, fec))
+      rowsPerShard_ = 0;
     if (rowsPerShard_ <= 0) { // single-file mode
       out_.open(path_,
                 std::ios::binary | (resume ? std::ios::app : std::ios::trunc));
@@ -165,6 +171,9 @@ public:
   }
 
   int shard() const { return shard_; }
+  // False when writing one plain file, either because sharding was turned off
+  // or because an older single-file dataset was opened.
+  bool sharded() const { return rowsPerShard_ > 0; }
   int64_t rows_in_shard() const { return rowsInShard_; }
   // Where rows are going right now, for progress display.
   std::string current_path() const {

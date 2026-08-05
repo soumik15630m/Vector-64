@@ -68,9 +68,15 @@ def main() -> int:
     scratch.mkdir(parents=True, exist_ok=True)
 
     # 1) convert shards -> per-shard .bin; hold out the last shard for validation
-    shards = sorted(data.glob("shard_*.txt"))
+    # The generator writes shard_NNNN.txt. Datasets predating that are plain
+    # .txt files with whatever name they were given, so fall back to those
+    # rather than telling the user their data is unusable.
+    shards = sorted(data.glob("shard_*.txt")) or sorted(data.glob("*.txt"))
     if len(shards) < 2:
-        raise SystemExit(f"need >=2 shard_*.txt in {data} (last is held out for validation)")
+        raise SystemExit(
+            f"need >=2 .txt datasets in {data} (the last is held out for "
+            f"validation, so one file alone cannot be used); found {len(shards)}"
+        )
     val_shard, train_shards = shards[-1], shards[:-1]
 
     def convert(txt: Path, out: Path) -> None:

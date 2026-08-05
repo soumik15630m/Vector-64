@@ -255,8 +255,15 @@ namespace {
 // The state file sits beside the dataset so a resumed run finds it without
 // being told where it is.
 std::string state_path_for(const std::string &out) {
-  // Inside the dataset directory, beside the shards it describes, so a resumed
-  // run finds it from the same path the user typed.
+  // A sharded dataset keeps its state inside the directory, beside the shards
+  // it describes. A single-file dataset -- what the generator wrote before it
+  // sharded -- kept it next to the file, so that layout is checked first and a
+  // run made by an older build still probes and resumes.
+  std::string legacy = out + ".state.json";
+  std::error_code ec;
+  if (std::filesystem::is_regular_file(out, ec) ||
+      std::filesystem::exists(legacy, ec))
+    return legacy;
   return (std::filesystem::path(out) / "state.json").string();
 }
 } // namespace
